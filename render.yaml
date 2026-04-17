@@ -1,0 +1,105 @@
+services:
+  - type: keyvalue
+    name: chatbot-redis
+    plan: free
+    ipAllowList: []
+
+  - type: web
+    name: chatbot-frontend
+    runtime: docker
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: BACKEND_HOST
+        fromService:
+          name: chatbot-backend
+          type: pserv
+          property: host
+      - key: BACKEND_PORT
+        fromService:
+          name: chatbot-backend
+          type: pserv
+          property: port
+
+  - type: pserv
+    name: chatbot-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DATABASE_URL_RAW
+        fromDatabase:
+          name: chatbot-db
+          property: connectionString
+      - key: REDIS_URL_RAW
+        fromService:
+          name: chatbot-redis
+          type: keyvalue
+          property: connectionString
+      - key: PORT
+        value: 8000
+      - key: UVICORN_WORKERS
+        value: 2
+      - key: DEBUG
+        value: false
+      - key: ENABLE_WEB_SEARCH
+        value: true
+      - key: CHUNK_SIZE
+        value: 800
+      - key: CHUNK_OVERLAP
+        value: 120
+      - key: RETRIEVAL_TOP_K
+        value: 5
+      - key: RETRIEVAL_SCORE_THRESHOLD
+        value: 0.30
+      - key: CORS_ORIGINS
+        value: '["https://chatbot-frontend.onrender.com"]'
+
+  - type: worker
+    name: chatbot-worker
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    dockerCommand: celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=2 -Q celery
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL_RAW
+        fromDatabase:
+          name: chatbot-db
+          property: connectionString
+      - key: REDIS_URL_RAW
+        fromService:
+          name: chatbot-redis
+          type: keyvalue
+          property: connectionString
+      - key: DEBUG
+        value: false
+      - key: ENABLE_WEB_SEARCH
+        value: true
+      - key: CHUNK_SIZE
+        value: 800
+      - key: CHUNK_OVERLAP
+        value: 120
+      - key: RETRIEVAL_TOP_K
+        value: 5
+      - key: RETRIEVAL_SCORE_THRESHOLD
+        value: 0.30
+
+databases:
+  - name: chatbot-db
+    plan: free
+    databaseName: chatbot
+    user: chatbot
+

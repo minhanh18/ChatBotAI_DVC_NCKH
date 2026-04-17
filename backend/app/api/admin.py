@@ -1,0 +1,277 @@
+"""
+Admin API — giám sát hệ thống, thống kê sử dụng.
+Bảo vệ bằng Basic Auth (config trong config.py).
+"""
+
+from __future__ import annotations
+
+import secrets
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.models.db import Conversation, Dataset, Document, Message, MessageFeedback, UsageLog, get_db
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+security = HTTPBasic()
+
+
+def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
+    ok_user = secrets.compare_digest(credentials.username, settings.ADMIN_USERNAME)
+    ok_pass = secrets.compare_digest(credentials.password, settings.ADMIN_PASSWORD)
+    if not (ok_user and ok_pass):
+        raise HTTPException(
+            401,
+            "Sai thông tin xác thực",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
+
+@router.post("/reset-monitoring")
+async def reset_monitoring(db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+    await db.execute(text("TRUNCATE TABLE usage_logs RESTART IDENTITY"))
+    await db.execute(text("TRUNCATE TABLE message_feedback RESTART IDENTITY"))
+    await db.commit()
+    return {"message": "Đã đặt lại log giám sát và log đánh giá."}
+
+
+# ── Dashboard tổng quan ───────────────────────────────────────────────────────
+
+@router.get("/dashboard")
+async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+    """Tổng quan hệ thống."""
+    now = datetime.utcnow()
+    since_24h = now - timedelta(hours=24)
+    since_7d = now - timedelta(days=7)
+
+    # Tổng conversations
+    total_convs = (await db.execute(select(func.count()).select_from(Conversation))).scalar()
+    # Conversations hôm nay
+    convs_24h = (await db.execute(
+        select(func.count()).select_from(Conversation).where(Conversation.created_at >= since_24h)
+    )).scalar()
+
+    # Tổng messages
+    total_msgs = (await db.execute(select(func.count()).select_from(Message))).scalar()
+    msgs_24h = (await db.execute(
+        select(func.count()).select_from(Message).where(Message.created_at >= since_24h)
+    )).scalar()
+
+    # RAG vs AI tỷ lệ (7 ngày)
+    mode_stats = (await db.execute(
+        select(UsageLog.answer_mode, func.count().label("cnt"))
+        .where(UsageLog.created_at >= since_7d)
+        .group_by(UsageLog.answer_mode)
+    )).fetchall()
+    mode_breakdown = {row.answer_mode: row.cnt for row in mode_stats}
+
+    # Latency trung bình
+    avg_latency = (await db.execute(
+        select(func.avg(UsageLog.latency_ms))
+        .where(UsageLog.created_at >= since_7d)
+    )).scalar()
+
+    # Tổng tokens dùng
+    total_tokens = (await db.execute(
+        select(func.sum(UsageLog.tokens_used))
+        .where(UsageLog.created_at >= since_7d)
+    )).scalar()
+
+    # Tài liệu
+    doc_stats = (await db.execute(
+        select(Document.status, func.count().label("cnt"))
+        .group_by(Document.status)
+    )).fetchall()
+
+    feedback_7d = (await db.execute(
+        select(MessageFeedback.rating, func.count().label("cnt"))
+        .where(MessageFeedback.created_at >= since_7d)
+        .group_by(MessageFeedback.rating)
+    )).fetchall()
+
+    return {
+        "conversations": {"total": total_convs, "last_24h": convs_24h},
+        "messages": {"total": total_msgs, "last_24h": msgs_24h},
+        "answer_modes_7d": mode_breakdown,
+        "avg_latency_ms_7d": round(float(avg_latency or 0), 1),
+        "total_tokens_7d": int(total_tokens or 0),
+        "documents": {row.status: row.cnt for row in doc_stats},
+        "feedback_7d": {row.rating: row.cnt for row in feedback_7d},
+    }
+
+
+# ── Usage logs ────────────────────────────────────────────────────────────────
+
+@router.get("/logs")
+async def usage_logs(
+    limit: int = 50,
+    offset: int = 0,
+    mode: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    stmt = (
+        select(UsageLog)
+        .order_by(UsageLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if mode:
+        stmt = stmt.where(UsageLog.answer_mode == mode)
+
+    result = await db.execute(stmt)
+    logs = result.scalars().all()
+    return [
+        {
+            "id": log.id,
+            "conversation_id": str(log.conversation_id) if log.conversation_id else None,
+            "query": log.query_text,
+            "mode": log.answer_mode,
+            "tokens": log.tokens_used,
+            "latency_ms": log.latency_ms,
+            "is_rag": log.is_rag,
+            "retrieved_chunks": log.retrieved_chunks,
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in logs
+    ]
+
+
+# ── Daily chart data ──────────────────────────────────────────────────────────
+
+@router.get("/stats/daily")
+async def daily_stats(days: int = 14, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+    """Số messages mỗi ngày trong N ngày gần nhất."""
+    since = datetime.utcnow() - timedelta(days=days)
+    result = await db.execute(
+        text("""
+            SELECT DATE(created_at) as day,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN answer_mode = 'rag' THEN 1 ELSE 0 END) as rag_count,
+                   SUM(CASE WHEN answer_mode = 'ai' THEN 1 ELSE 0 END) as ai_count,
+                   AVG(latency_ms) as avg_latency
+            FROM usage_logs
+            WHERE created_at >= :since
+            GROUP BY DATE(created_at)
+            ORDER BY day
+        """),
+        {"since": since},
+    )
+    rows = result.fetchall()
+    return [
+        {
+            "day": str(row.day),
+            "total": row.total,
+            "rag": row.rag_count,
+            "ai": row.ai_count,
+            "avg_latency_ms": round(float(row.avg_latency or 0), 1),
+        }
+        for row in rows
+    ]
+
+
+# ── Document management ───────────────────────────────────────────────────────
+
+@router.get("/documents")
+async def admin_list_documents(
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    stmt = select(Document).order_by(Document.created_at.desc()).limit(200)
+    if status:
+        stmt = stmt.where(Document.status == status)
+    result = await db.execute(stmt)
+    docs = result.scalars().all()
+    return [
+        {
+            "id": str(d.id),
+            "dataset_id": str(d.dataset_id),
+            "name": d.name,
+            "status": d.status,
+            "chunk_count": d.chunk_count,
+            "file_size": d.file_size,
+            "error": d.error_message,
+            "created_at": d.created_at.isoformat(),
+        }
+        for d in docs
+    ]
+
+
+# ── Conversations ─────────────────────────────────────────────────────────────
+
+@router.get("/conversations")
+async def admin_conversations(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    result = await db.execute(
+        select(Conversation).order_by(Conversation.updated_at.desc()).limit(limit)
+    )
+    convs = result.scalars().all()
+    return [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "session_key": c.session_key,
+            "created_at": c.created_at.isoformat(),
+            "updated_at": c.updated_at.isoformat(),
+        }
+        for c in convs
+    ]
+
+
+@router.delete("/conversations/{conversation_id}")
+async def admin_delete_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    from uuid import UUID
+    conv = (await db.execute(
+        select(Conversation).where(Conversation.id == UUID(conversation_id))
+    )).scalar_one_or_none()
+    if not conv:
+        raise HTTPException(404, "Không tìm thấy")
+    await db.delete(conv)
+    await db.commit()
+    return {"message": "Đã xoá"}
+
+
+@router.get("/feedback-logs")
+async def feedback_logs(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    result = await db.execute(
+        select(MessageFeedback, Message.content, Conversation.title)
+        .join(Message, Message.id == MessageFeedback.message_id)
+        .join(Conversation, Conversation.id == MessageFeedback.conversation_id, isouter=True)
+        .order_by(MessageFeedback.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    rows = result.all()
+    return [
+        {
+            "id": feedback.id,
+            "conversation_id": str(feedback.conversation_id) if feedback.conversation_id else None,
+            "conversation_title": title or "Hội thoại",
+            "message_id": str(feedback.message_id),
+            "rating": feedback.rating,
+            "issue_type": feedback.issue_type,
+            "description": feedback.description,
+            "answer_excerpt": (message_content[:180] + "…") if message_content and len(message_content) > 180 else (message_content or ""),
+            "created_at": feedback.created_at.isoformat(),
+        }
+        for feedback, message_content, title in rows
+    ]

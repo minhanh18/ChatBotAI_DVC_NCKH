@@ -1,0 +1,33 @@
+# ── Web framework ─────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+
+# ── Database ───────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+pgvector==0.3.6
+psycopg2-binary==2.9.10
+alembic==1.14.0
+
+# ── Config ─────────────────────────────────────────────────
+pydantic-settings==2.6.1
+pydantic==2.10.3
+python-dotenv==1.0.1
+
+# ── Google AI (Gemini Flash 2.5 + Embeddings) ──────────────
+google-generativeai==0.8.3
+
+# ── Task queue ─────────────────────────────────────────────
+celery==5.4.0
+redis==5.2.1
+
+# ── Document extractors ────────────────────────────────────
+pypdf==5.1.0
+python-docx==1.1.2
+beautifulsoup4==4.12.3
+
+# ── Utilities ─────────────────────────────────────────────
+httpx==0.28.1
+
+Pillow==10.4.0

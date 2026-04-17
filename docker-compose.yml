@@ -1,0 +1,130 @@
+version: "3.9"
+
+# ── Shared env cho backend + worker ──────────────────────────────────────────
+x-backend-env: &backend-env
+  GEMINI_API_KEY: ${GEMINI_API_KEY}
+  SECRET_KEY: ${SECRET_KEY:-changeme-use-openssl-rand-base64-42}
+  DEBUG: ${DEBUG:-false}
+  # DB
+  DB_HOST: db
+  DB_PORT: 5432
+  DB_USER: ${DB_USER:-chatbot}
+  DB_PASSWORD: ${DB_PASSWORD:-chatbot123}
+  DB_NAME: ${DB_NAME:-chatbot}
+  DATABASE_URL_RAW: ${DATABASE_URL_RAW:-}
+  # Redis
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_DB: 0
+  REDIS_URL_RAW: ${REDIS_URL_RAW:-}
+  # RAG / Chunking (overridable via .env)
+  CHUNK_SIZE: ${CHUNK_SIZE:-800}
+  CHUNK_OVERLAP: ${CHUNK_OVERLAP:-120}
+  RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-5}
+  RETRIEVAL_SCORE_THRESHOLD: ${RETRIEVAL_SCORE_THRESHOLD:-0.30}
+  # Admin
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+  # CORS: cho phép frontend
+  CORS_ORIGINS: '["http://localhost", "http://localhost:80", "http://localhost:3000"]'
+  # Upload
+  UPLOAD_DIR: /app/uploads
+
+services:
+
+  # ── PostgreSQL + pgvector ───────────────────────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-chatbot}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-chatbot123}
+      POSTGRES_DB: ${DB_NAME:-chatbot}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-chatbot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend API ─────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *backend-env
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Celery Worker (document indexing) ───────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=2 -Q celery
+    environment:
+      <<: *backend-env
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Frontend ────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      BACKEND_HOST: backend
+      BACKEND_PORT: 8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:

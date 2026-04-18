@@ -155,7 +155,6 @@ export default function App() {
           sessionScope="user"
           adminMode={false}
           hideHistory
-          allowWebSearch={false}
           embedded={embedded}
         />
       </div>
@@ -203,7 +202,7 @@ export default function App() {
       </nav>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'chat' && <ChatWindow sessionScope="admin" adminMode allowWebSearch={false} />}
+        {tab === 'chat' && <ChatWindow sessionScope="admin" adminMode />}
         {tab === 'documents' && <DocumentsPanel auth={adminAuth} />}
         {tab === 'admin' && <AdminDashboard auth={adminAuth} />}
       </div>

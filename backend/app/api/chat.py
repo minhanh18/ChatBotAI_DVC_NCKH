@@ -31,7 +31,6 @@ class ChatRequest(BaseModel):
     dataset_id: Optional[str] = None
     mode: Optional[str] = None
     session_key: Optional[str] = None
-    use_web: bool = False
 
 
 class ConversationOut(BaseModel):
@@ -73,13 +72,14 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     history = await _load_history(db, conversation.id, exclude_message_id=user_msg.id)
     effective_query = _resolve_effective_query(req.query, history)
 
-    force_mode = AnswerMode(req.mode) if req.mode in ("rag", "ai") else None
+    requested_mode = AnswerMode(req.mode) if req.mode in ("rag", "ai") else None
+    force_web = await _should_auto_force_web(db, conversation.id, req.query)
+    force_mode = requested_mode if requested_mode == AnswerMode.RAG else (AnswerMode.AI if force_web else requested_mode)
     decision = await agent_router.route(
         query=effective_query,
         db=db,
         dataset_id=req.dataset_id,
         force_mode=force_mode,
-        prefer_web=req.use_web,
     )
 
     async def event_stream():
@@ -90,7 +90,7 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             history=history,
             db=db,
             conversation=conversation,
-            use_web=req.use_web,
+            force_web=force_web,
         ):
             yield chunk
 
@@ -292,7 +292,7 @@ def _is_context_light_query(query: str) -> bool:
     if not normalized:
         return True
     generic_patterns = [
-        "bao nhiêu", "lệ phí", "mức phạt", "phạt bao nhiêu", "giá bao nhiêu", "như nào", "như thế nào",
+        "bao nhiêu", "lệ phí", "mức phạt", "phạt bao nhiêu", "như nào", "như thế nào",
         "còn hiệu lực không", "có miễn không", "mới nhất", "điều kiện sao", "thủ tục sao", "chi phí sao",
     ]
     if len(normalized) <= 24:
@@ -316,6 +316,73 @@ def _resolve_effective_query(query: str, history: list[Message]) -> str:
         if previous != clean_query:
             return f"{previous}\n\nCâu hỏi tiếp theo cùng ngữ cảnh: {clean_query}"
     return clean_query
+
+
+_RECHECK_HINTS = [
+    "bạn trả lời sai", "trả lời sai", "câu trước sai", "phản hồi trước sai",
+    "sai rồi", "không đúng", "chưa đúng",
+    "xem lại", "kiểm tra lại", "tra lại", "đối chiếu lại", "tra ngược lại",
+]
+
+_LEGAL_FRESHNESS_HINTS = [
+    "mới nhất", "hiện hành", "hiện nay", "hiện tại",
+    "còn hiệu lực", "đang có hiệu lực", "hiệu lực",
+    "vừa sửa đổi", "vừa bổ sung", "sửa đổi", "bổ sung",
+    "thay thế", "thay đổi", "quy định mới", "luật mới", "nghị định mới", "thông tư mới",
+]
+
+_LEGAL_OBJECT_HINTS = [
+    "luật", "bộ luật", "nghị định", "thông tư", "quyết định", "quy định",
+    "điều", "khoản", "điểm",
+    "xử phạt", "mức phạt", "lệ phí",
+    "thủ tục", "hành chính", "căn cứ pháp lý",
+    "cư trú", "tạm trú", "thường trú", "cccd", "căn cước", "hộ tịch", "thuế",
+]
+
+
+def _contains_any(text: str, keywords: list[str]) -> bool:
+    text = " ".join((text or "").split()).lower()
+    return any(keyword in text for keyword in keywords)
+
+
+def _is_recheck_query(query: str) -> bool:
+    return _contains_any(query, _RECHECK_HINTS)
+
+
+def _is_legal_freshness_query(query: str) -> bool:
+    q = " ".join((query or "").split()).lower()
+    return _contains_any(q, _LEGAL_OBJECT_HINTS) and _contains_any(q, _LEGAL_FRESHNESS_HINTS)
+
+
+async def _latest_assistant_feedback_is_dislike(db: AsyncSession, conversation_id: UUID) -> bool:
+    last_assistant_stmt = (
+        select(Message)
+        .where(Message.conversation_id == conversation_id, Message.role == "assistant")
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    last_assistant = (await db.execute(last_assistant_stmt)).scalars().first()
+    if not last_assistant:
+        return False
+
+    feedback_stmt = (
+        select(MessageFeedback)
+        .where(MessageFeedback.message_id == last_assistant.id)
+        .order_by(MessageFeedback.created_at.desc())
+        .limit(1)
+    )
+    latest_feedback = (await db.execute(feedback_stmt)).scalars().first()
+    return bool(latest_feedback and latest_feedback.rating == "dislike")
+
+
+async def _should_auto_force_web(db: AsyncSession, conversation_id: UUID, query: str) -> bool:
+    if _is_legal_freshness_query(query):
+        return True
+    if _is_recheck_query(query):
+        return True
+    if _is_context_light_query(query) and await _latest_assistant_feedback_is_dislike(db, conversation_id):
+        return True
+    return False
 
 
 async def _save_user_message(db: AsyncSession, conversation: Conversation, content: str) -> Message:

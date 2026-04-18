@@ -26,7 +26,7 @@ from app.agent.router import AnswerMode, RouteDecision
 from app.config import settings
 from app.models.db import Conversation, Message, UsageLog
 from app.rag.retriever import RetrievedChunk
-from app.web.live_search import is_time_sensitive_query, maybe_fetch_web_context
+from app.web.live_search import maybe_fetch_web_context
 
 logger = logging.getLogger(__name__)
 genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -61,8 +61,8 @@ _AI_SYSTEM_PROMPT = """Bạn là trợ lý AI thông minh, trả lời bằng ti
 
 ## Hướng dẫn chung
 - Trả lời chính xác, hữu ích và đầy đủ vừa phải; không vì ngắn gọn mà làm mất ý quan trọng.
-- Với câu hỏi cần thông tin mới, ưu tiên nguồn web có ngày gần nhất và nêu rõ thời điểm cập nhật.
-- Nếu câu hỏi chứa các ý như mới nhất, hiện nay, hiệu lực, sửa đổi, bổ sung, xử phạt, lệ phí, giá cả hôm nay, thời gian thực, phải ưu tiên dữ liệu mới hơn dữ liệu cũ.
+- Với câu hỏi pháp lý/hành chính cần kiểm tra bản mới nhất, hiệu lực, sửa đổi, bổ sung hoặc đối chiếu lại, ưu tiên nguồn web có ngày gần nhất và nêu rõ thời điểm cập nhật.
+- Không dùng dữ liệu web cho câu hỏi pháp lý thông thường nếu chưa thật sự cần kiểm chứng tính cập nhật.
 - Nếu có nhiều nguồn và một nguồn mới hơn làm thay đổi nội dung nguồn cũ, dùng nguồn mới hơn và nói rõ điểm thay đổi, không được trộn lẫn hai mốc thời gian.
 - Luôn bám đúng đối tượng người dùng hỏi; không lấy nhầm số liệu của mục lân cận hoặc chủ thể gần nghĩa.
 - Dùng mốc thời gian hệ thống ở trên để hiểu các cụm như hôm nay, hiện nay, hiện tại, ngày này, thời điểm này.
@@ -208,7 +208,7 @@ class ChatEngine:
         db: AsyncSession,
         conversation: Conversation,
         image_part: Optional[Any] = None,
-        use_web: bool = False,
+        force_web: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Tạo SSE stream. Mỗi event là JSON line:
@@ -235,7 +235,7 @@ class ChatEngine:
                         citations = event.data
                         yield _sse(StreamEvent("citations", [asdict(c) for c in citations]))
             else:
-                async for event in self._stream_ai(query, history, support_chunks=decision.chunks, image_part=image_part, use_web=use_web):
+                async for event in self._stream_ai(query, history, support_chunks=decision.chunks, image_part=image_part, force_web=force_web):
                     if event.type == "token":
                         full_text += event.data
                         yield _sse(event)
@@ -305,7 +305,7 @@ class ChatEngine:
         history: list[Message],
         support_chunks: Optional[list[RetrievedChunk]] = None,
         image_part: Optional[Any] = None,
-        use_web: bool = False,
+        force_web: bool = False,
     ) -> AsyncGenerator[StreamEvent, None]:
         system_prompt = _AI_SYSTEM_PROMPT.format(
             current_datetime=_current_datetime_context(),
@@ -324,25 +324,26 @@ class ChatEngine:
             )
             yield StreamEvent("citations", rag_citations)
 
-        web_context, web_citations = await maybe_fetch_web_context(query, force=use_web)
+        web_context, web_citations = await maybe_fetch_web_context(query, force=force_web)
 
         if web_context:
             system_prompt += (
-                "\n\n## Dữ liệu web thời gian thực\n"
+                "\n\n## Dữ liệu web kiểm chứng cập nhật\n"
                 f"{web_context}\n\n"
                 "## Quy tắc dùng dữ liệu web\n"
-                "- Chỉ dùng dữ liệu web ở trên khi người dùng đã chủ động bật chế độ realtime.\n"
+                "- Chỉ dùng dữ liệu web ở trên khi truy vấn cần kiểm tra tính cập nhật, hiệu lực, sửa đổi, thay thế của văn bản pháp lý/hành chính hoặc khi cần đối chiếu lại vì người dùng báo phản hồi trước chưa đúng.\n"
+                "- Ưu tiên nguồn chính thống của cơ quan nhà nước; nếu dùng nguồn tổng hợp pháp lý thì phải xem đó là nguồn hỗ trợ đối chiếu.\n"
                 "- Ưu tiên nguồn có ngày trên trang gần nhất với thời gian hệ thống hiện tại.\n"
                 "- Nếu dữ liệu web chưa đủ mới hoặc chưa chắc chắn, nói rõ giới hạn thay vì khẳng định chắc chắn.\n"
                 "- Khi phù hợp, nêu tên nguồn hoặc URL trong câu trả lời.\n"
                 "- Với câu hỏi pháp lý hoặc lệ phí, phải đối chiếu đúng tên thủ tục trong câu hỏi và trong lịch sử gần nhất trước khi kết luận mức tiền.\n"
             )
             yield StreamEvent("citations", web_citations)
-        elif use_web:
+        elif force_web:
             system_prompt += (
                 "\n\n## Lưu ý về dữ liệu hiện tại\n"
-                "- Người dùng đã bật chế độ thời gian thực.\n"
-                "- Nếu không có đủ nguồn web mới, hãy nói rõ rằng bạn chưa lấy được dữ liệu cập nhật thay vì suy đoán.\n"
+                "- Đây là truy vấn cần kiểm tra nguồn web cập nhật, nhưng hiện chưa lấy được đủ nguồn phù hợp.\n"
+                "- Nếu chưa đủ căn cứ mới, hãy nói rõ giới hạn này thay vì suy đoán.\n"
             )
 
         gemini_history = _build_history(history)

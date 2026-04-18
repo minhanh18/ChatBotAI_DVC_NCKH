@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  Globe,
   ImagePlus,
   Menu,
   Mic,
@@ -53,7 +52,6 @@ interface ChatWindowProps {
   sessionScope?: 'user' | 'admin';
   adminMode?: boolean;
   hideHistory?: boolean;
-  allowWebSearch?: boolean;
   embedded?: boolean;
 }
 
@@ -62,7 +60,6 @@ export function ChatWindow({
   sessionScope = 'user',
   adminMode = false,
   hideHistory = false,
-  allowWebSearch = true,
   embedded = false,
 }: ChatWindowProps) {
   const isUserUi = !adminMode;
@@ -84,7 +81,6 @@ export function ChatWindow({
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
-  const [useWebSearch, setUseWebSearch] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => {
     try {
@@ -424,7 +420,6 @@ export function ChatWindow({
               query,
               conversation_id: activeConvId || undefined,
               session_key: sessionKey,
-              use_web: allowWebSearch ? useWebSearch : false,
             },
             callbacks,
             abort.signal,
@@ -437,7 +432,7 @@ export function ChatWindow({
         setPendingUserTime(null);
       }
     },
-    [activeConvId, adminMode, allowWebSearch, input, loadConversations, loadMessages, selectedImage, sessionKey, stream.active, useWebSearch],
+    [activeConvId, adminMode, input, loadConversations, loadMessages, selectedImage, sessionKey, stream.active],
   );
 
   const filteredConversations = useMemo(() => {
@@ -643,19 +638,6 @@ export function ChatWindow({
                   Hội thoại mới
                 </button>
               )}
-              {allowWebSearch && !isUserUi && (
-                <button
-                  onClick={() => setUseWebSearch((prev) => !prev)}
-                  className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm border transition ${
-                    useWebSearch
-                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <Globe size={15} />
-                  Tìm kiếm web
-                </button>
-              )}
             </div>
           </div>
         )}
@@ -811,20 +793,6 @@ export function ChatWindow({
               >
                 <Mic size={compactUi ? 16 : 17} />
               </button>
-
-              {!isUserUi && allowWebSearch && (
-                <button
-                  onClick={() => setUseWebSearch((prev) => !prev)}
-                  className={`w-10 h-10 rounded-2xl flex items-center justify-center border transition ${
-                    useWebSearch
-                      ? 'border-indigo-200 bg-indigo-50 text-indigo-600'
-                      : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-                  }`}
-                  title="Bật / tắt tìm kiếm web"
-                >
-                  <Globe size={18} />
-                </button>
-              )}
 
               <div className="flex-1 min-w-0 self-center">
                 <textarea

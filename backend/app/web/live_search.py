@@ -22,38 +22,36 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 )
 
-WEB_KEYWORDS = [
-    "hôm nay", "hiện tại", "mới nhất", "tin tức", "thời gian thực", "website", "trang web",
-    "web", "online", "internet", "google", "tra cứu web", "search web", "crawl", "cào",
-    "giá hiện tại", "latest", "current", "news", "official site", "official website",
-    "xăng", "xăng dầu", "giá xăng", "giá dầu", "luật mới", "quy định mới", "hiệu lực", "sửa đổi", "bổ sung",
-]
-
-TIME_SENSITIVE_KEYWORDS = [
-    "hôm nay", "bây giờ", "hiện tại", "mới nhất", "vừa cập nhật", "cập nhật", "trực tiếp", "real time",
-    "tỷ giá", "giá", "giá vàng", "giá xăng", "xăng dầu", "xăng", "dầu diesel", "chứng khoán", "coin", "crypto", "thời tiết", "tin tức",
-    "lúc này", "bao nhiêu", "ngày mai", "hôm qua", "tuần này", "tháng này", "năm nay", "luật mới nhất", "quy định mới nhất", "hiệu lực", "xử phạt", "mức phạt",
-]
-
-TOPIC_PRIORITY_RULES: dict[tuple[str, ...], list[str]] = {
-    ("giá vàng", "vàng", "pnj", "doji", "sjc"): ["pnj.com.vn", "sjc.com.vn", "doji.vn", "btmc.vn"],
-    ("tỷ giá", "ngân hàng", "usd", "eur"): ["vietcombank.com.vn", "bidv.com.vn", "agribank.com.vn", "sbv.gov.vn"],
-    ("thời tiết", "nhiệt độ", "mưa"): ["nchmf.gov.vn", "weather.com"],
-    ("chứng khoán", "cổ phiếu", "vnindex"): ["hsx.vn", "hnx.vn", "cafef.vn", "vietstock.vn"],
-    ("xăng dầu", "giá xăng", "giá dầu", "xăng", "dầu diesel", "ron95", "e5"): ["moit.gov.vn", "petrolimex.com.vn", "pvoil.com.vn"],
-    ("luật", "nghị định", "thông tư", "cư trú", "tạm trú", "thường trú", "xử phạt", "lệ phí"): ["dichvucong.gov.vn", "mps.gov.vn", "mof.gov.vn", "moj.gov.vn", "thuvienphapluat.vn"],
-}
-
-URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s)\]>]+", re.IGNORECASE)
 DATE_PATTERNS = [
-    re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b"),
-    re.compile(r"\b(\d{1,2}-\d{1,2}-\d{4})\b"),
-    re.compile(r"\b(\d{4}-\d{2}-\d{2})\b"),
+    re.compile(r"(\d{1,2}/\d{1,2}/\d{4})"),
+    re.compile(r"(\d{1,2}-\d{1,2}-\d{4})"),
+    re.compile(r"(\d{4}-\d{1,2}-\d{1,2})"),
+    re.compile(r"ngày\s*(\d{1,2}/\d{1,2}/\d{4})", re.IGNORECASE),
 ]
 
 LEGAL_FRESHNESS_KEYWORDS = [
-    "mới nhất", "hiện nay", "hiện tại", "cập nhật", "luật mới", "quy định mới", "hiệu lực",
-    "sửa đổi", "bổ sung", "thay đổi", "xử phạt", "mức phạt", "lệ phí", "tạm trú", "thường trú",
+    "mới nhất", "hiện hành", "hiện nay", "hiện tại",
+    "còn hiệu lực", "đang có hiệu lực", "hiệu lực",
+    "vừa sửa đổi", "vừa bổ sung", "sửa đổi", "bổ sung",
+    "thay thế", "thay đổi", "ban hành mới", "cập nhật mới",
+    "quy định mới", "luật mới", "nghị định mới", "thông tư mới",
+    "nhà nước vừa sửa", "nhà nước vừa sửa đổi",
+]
+
+LEGAL_OBJECT_KEYWORDS = [
+    "luật", "bộ luật", "nghị định", "thông tư", "quyết định", "quy định",
+    "điều", "khoản", "điểm",
+    "xử phạt", "mức phạt", "lệ phí",
+    "thủ tục", "hành chính", "căn cứ pháp lý",
+    "cư trú", "tạm trú", "thường trú", "cccd", "căn cước", "hộ tịch", "thuế",
+    "dịch vụ công", "hộ khẩu", "khai sinh", "kết hôn", "ly hôn",
+]
+
+DISPUTE_RECHECK_KEYWORDS = [
+    "bạn trả lời sai", "trả lời sai", "câu trước sai", "phản hồi trước sai",
+    "sai rồi", "không đúng", "chưa đúng",
+    "xem lại", "kiểm tra lại", "tra lại", "đối chiếu lại", "tra ngược lại",
 ]
 
 QUERY_ABBREVIATIONS = {
@@ -63,6 +61,16 @@ QUERY_ABBREVIATIONS = {
     "cccd": "căn cước công dân",
     "dvctt": "dịch vụ công trực tuyến",
 }
+
+PRIORITY_DOMAINS = [
+    "vanban.chinhphu.vn",
+    "xaydungchinhsach.chinhphu.vn",
+    "moj.gov.vn",
+    "dichvucong.gov.vn",
+    "mps.gov.vn",
+    "mof.gov.vn",
+    "thuvienphapluat.vn",
+]
 
 
 @dataclass
@@ -78,6 +86,63 @@ class WebResult:
     reliability_score: float = 0.0
 
 
+def _contains_any(text: str, keywords: list[str]) -> bool:
+    text = (text or "").lower()
+    return any(keyword in text for keyword in keywords)
+
+
+def clean_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def clean_text_preserve_breaks(text: str) -> str:
+    lines = [re.sub(r"[ \t]+", " ", (line or "")).strip() for line in (text or "").splitlines()]
+    lines = [line for line in lines if line]
+    return "\n".join(lines).strip()
+
+
+def normalize_query_text(query: str) -> str:
+    normalized = clean_text(query)
+    if not normalized:
+        return ""
+    for short, expanded in QUERY_ABBREVIATIONS.items():
+        normalized = re.sub(rf"(?<!\w){re.escape(short)}(?!\w)", expanded, normalized, flags=re.IGNORECASE)
+    return clean_text(normalized)
+
+
+def sanitize_web_query(query: str) -> str:
+    normalized = normalize_query_text(query)
+    normalized = re.sub(r"câu hỏi tiếp theo cùng ngữ cảnh\s*:\s*", " ", normalized, flags=re.IGNORECASE)
+    for phrase in sorted(DISPUTE_RECHECK_KEYWORDS, key=len, reverse=True):
+        normalized = re.sub(re.escape(phrase), " ", normalized, flags=re.IGNORECASE)
+    return clean_text(normalized)
+
+
+def extract_urls(text: str) -> list[str]:
+    return [match.rstrip(').,]') for match in URL_RE.findall(text or "")]
+
+
+def is_legal_update_query(query: str) -> bool:
+    q = normalize_query_text(query).lower()
+    return _contains_any(q, LEGAL_OBJECT_KEYWORDS) and _contains_any(q, LEGAL_FRESHNESS_KEYWORDS)
+
+
+def is_dispute_recheck_query(query: str) -> bool:
+    return _contains_any(normalize_query_text(query).lower(), DISPUTE_RECHECK_KEYWORDS)
+
+
+def is_time_sensitive_query(query: str) -> bool:
+    return is_legal_update_query(query)
+
+
+def should_prioritize_fresh_web_context(query: str) -> bool:
+    return is_legal_update_query(query)
+
+
+def should_search_web(query: str) -> bool:
+    return bool(extract_urls(query)) or is_legal_update_query(query) or is_dispute_recheck_query(query)
+
+
 async def maybe_fetch_web_context(query: str, force: bool = False) -> tuple[str, list[dict]]:
     if not settings.ENABLE_WEB_SEARCH:
         return "", []
@@ -86,7 +151,7 @@ async def maybe_fetch_web_context(query: str, force: bool = False) -> tuple[str,
     if not query:
         return "", []
 
-    if not (force or should_search_web(query) or is_time_sensitive_query(query) or should_prioritize_fresh_web_context(query)):
+    if not (force or should_search_web(query)):
         return "", []
 
     try:
@@ -171,7 +236,7 @@ async def search_and_fetch(query: str) -> list[WebResult]:
             deduped.append(item)
 
         ranked_candidates = sorted(deduped, key=lambda item: score_search_result(query, item), reverse=True)
-        fetch_limit = max(settings.WEB_SEARCH_FETCH_PAGES + 1, 5 if (is_time_sensitive_query(query) or should_prioritize_fresh_web_context(query)) else settings.WEB_SEARCH_FETCH_PAGES)
+        fetch_limit = max(settings.WEB_SEARCH_FETCH_PAGES + 1, 5 if should_prioritize_fresh_web_context(query) else settings.WEB_SEARCH_FETCH_PAGES)
         tasks = [
             fetch_page_context(client, item["url"], item.get("title"), item.get("snippet", ""), query=query)
             for item in ranked_candidates[: fetch_limit * 2]
@@ -288,29 +353,28 @@ async def fetch_page_context(
 
 
 def build_search_queries(query: str) -> list[str]:
-    base = normalize_query_text(query)
+    base = sanitize_web_query(query)
     if not base:
         return []
 
     now = now_app_time()
     date_vi = now.strftime("%d/%m/%Y")
     year = now.strftime("%Y")
-    month_year = now.strftime("%m/%Y")
 
     variants = [base]
-    if is_time_sensitive_query(base) or should_prioritize_fresh_web_context(base):
+    if should_prioritize_fresh_web_context(base):
         variants.extend([
-            f"{base} hôm nay",
-            f"{base} {date_vi}",
+            f"{base} mới nhất",
+            f"{base} hiện hành",
+            f"{base} còn hiệu lực không",
             f"{base} cập nhật {date_vi}",
-            f"{base} mới nhất {year}",
-            f"{base} {month_year}",
+            f"{base} {year}",
         ])
 
-    for domain in priority_domains_for_query(base)[:2]:
+    for domain in priority_domains_for_query(base)[:4]:
         variants.append(f"site:{domain} {base}")
-        if is_time_sensitive_query(base) or should_prioritize_fresh_web_context(base):
-            variants.append(f"site:{domain} {base} {date_vi}")
+        if should_prioritize_fresh_web_context(base):
+            variants.append(f"site:{domain} {base} {year}")
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -343,14 +407,11 @@ def score_search_result(query: str, item: dict) -> float:
         if token in title.lower():
             score += 1.4
 
-    if is_time_sensitive_query(query) or should_prioritize_fresh_web_context(query):
-        today = now_app_time().strftime("%d/%m/%Y")
+    if should_prioritize_fresh_web_context(query):
         year = now_app_time().strftime("%Y")
-        if today in haystack:
-            score += 4.0
         if year in haystack:
             score += 1.6
-        if any(keyword in haystack for keyword in ["hôm nay", "cập nhật", "mới nhất", "live", "trực tiếp"]):
+        if any(keyword in haystack for keyword in ["hiện hành", "mới nhất", "hiệu lực", "sửa đổi", "bổ sung", "thay thế"]):
             score += 2.2
 
     return score
@@ -366,12 +427,9 @@ def score_web_result(query: str, result: WebResult) -> float:
         if token in result.title.lower():
             score += 0.11
 
-    if is_time_sensitive_query(query) or should_prioritize_fresh_web_context(query):
+    if should_prioritize_fresh_web_context(query):
         score += date_recency_bonus(result.page_date)
-        today = now_app_time().strftime("%d/%m/%Y")
-        if today in haystack:
-            score += 0.22
-        if any(keyword in haystack for keyword in ["hôm nay", "cập nhật", "mới nhất", "live", "trực tiếp"]):
+        if any(keyword in haystack for keyword in ["hiện hành", "mới nhất", "hiệu lực", "sửa đổi", "bổ sung", "thay thế"]):
             score += 0.14
 
     return min(score, 0.99)
@@ -435,22 +493,6 @@ def normalize_date_string(value: str | None) -> str | None:
     return None
 
 
-def should_prioritize_fresh_web_context(query: str) -> bool:
-    query_l = (query or "").lower()
-    if is_time_sensitive_query(query_l):
-        return True
-    return any(keyword in query_l for keyword in LEGAL_FRESHNESS_KEYWORDS)
-
-
-def normalize_query_text(query: str) -> str:
-    normalized = clean_text(query)
-    if not normalized:
-        return ""
-    for short, expanded in QUERY_ABBREVIATIONS.items():
-        normalized = re.sub(rf"(?<!\w){re.escape(short)}(?!\w)", expanded, normalized, flags=re.IGNORECASE)
-    return clean_text(normalized)
-
-
 def exact_subject_terms(query: str) -> list[str]:
     q = normalize_query_text(query).lower()
     subjects: list[str] = []
@@ -458,10 +500,16 @@ def exact_subject_terms(query: str) -> list[str]:
         subjects.extend(["đăng ký tạm trú", "gia hạn tạm trú", "tạm trú"])
     if "thường trú" in q:
         subjects.extend(["đăng ký thường trú", "thường trú"])
+    if "cư trú" in q:
+        subjects.extend(["cư trú", "luật cư trú"])
     if "lệ phí" in q or "mức thu" in q or ("phí" in q and "đăng ký" in q):
         subjects.extend(["lệ phí", "mức thu", "nộp hồ sơ trực tuyến", "nộp hồ sơ trực tiếp"])
-    if "xăng dầu" in q or "giá xăng" in q or "giá dầu" in q:
-        subjects.extend(["giá xăng", "xăng dầu", "giá dầu", "ron95", "e5"])
+    if "cccd" in q or "căn cước" in q:
+        subjects.extend(["căn cước công dân", "cccd"])
+    if "khai sinh" in q:
+        subjects.extend(["khai sinh", "đăng ký khai sinh"])
+    if "kết hôn" in q:
+        subjects.extend(["đăng ký kết hôn", "kết hôn"])
 
     ordered: list[str] = []
     seen: set[str] = set()
@@ -514,7 +562,7 @@ def score_focus_snippet(snippet: str, query: str) -> float:
     for term in negative_subject_terms(query):
         if term in snippet_l:
             score -= 3.0
-    if any(token in snippet_l for token in ["đồng", "mức thu", "lệ phí", "phạt"]):
+    if any(token in snippet_l for token in ["đồng", "mức thu", "lệ phí", "phạt", "hiệu lực"]):
         score += 0.8
     return score
 
@@ -619,7 +667,7 @@ def significant_tokens(query: str) -> list[str]:
     tokens = re.findall(r"[\wÀ-ỹ]+", normalize_query_text(query).lower())
     stop_words = {
         "là", "gì", "bao", "nhiêu", "cho", "tôi", "về", "của", "the", "a", "an", "and", "or",
-        "như", "nào", "hiện", "nay", "mới", "nhất", "bao", "nhiêu", "mức", "phí"
+        "như", "nào", "hiện", "nay", "mới", "nhất", "mức", "phí", "giúp", "mình", "xem", "lại",
     }
     filtered: list[str] = []
     for token in tokens:
@@ -627,20 +675,6 @@ def significant_tokens(query: str) -> list[str]:
             continue
         filtered.append(token)
     return filtered[:10]
-
-
-def extract_urls(text: str) -> list[str]:
-    return [match.rstrip(').,]') for match in URL_RE.findall(text or "")]
-
-
-def is_time_sensitive_query(query: str) -> bool:
-    query_l = (query or "").lower()
-    return any(keyword in query_l for keyword in TIME_SENSITIVE_KEYWORDS)
-
-
-def should_search_web(query: str) -> bool:
-    query_l = query.lower()
-    return bool(extract_urls(query)) or any(keyword in query_l for keyword in WEB_KEYWORDS) or is_time_sensitive_query(query) or should_prioritize_fresh_web_context(query)
 
 
 def normalize_search_result_url(url: str) -> str:
@@ -658,16 +692,6 @@ def normalize_search_result_url(url: str) -> str:
     return url
 
 
-def clean_text(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip()
-
-
-def clean_text_preserve_breaks(text: str) -> str:
-    lines = [re.sub(r"[ \t]+", " ", (line or "")).strip() for line in (text or "").splitlines()]
-    lines = [line for line in lines if line]
-    return "\n".join(lines).strip()
-
-
 def now_app_time() -> datetime:
     return datetime.now(ZoneInfo(settings.APP_TIMEZONE))
 
@@ -677,18 +701,10 @@ def get_domain(url: str) -> str:
 
 
 def priority_domains_for_query(query: str) -> list[str]:
-    query_l = query.lower()
-    domains: list[str] = []
-    for keywords, values in TOPIC_PRIORITY_RULES.items():
-        if any(keyword in query_l for keyword in keywords):
-            domains.extend(values)
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for domain in domains:
-        if domain not in seen:
-            ordered.append(domain)
-            seen.add(domain)
-    return ordered
+    query_l = normalize_query_text(query).lower()
+    if not _contains_any(query_l, LEGAL_OBJECT_KEYWORDS + LEGAL_FRESHNESS_KEYWORDS + DISPUTE_RECHECK_KEYWORDS):
+        return []
+    return PRIORITY_DOMAINS.copy()
 
 
 def score_domain_reliability(domain: str, query: str, title: str = "") -> float:
@@ -708,7 +724,7 @@ def score_domain_reliability(domain: str, query: str, title: str = "") -> float:
 
     if domain in priority_domains_for_query(query):
         score += 0.28
-    if 'thuvienphapluat.vn' in domain and any(k in query.lower() for k in ['luật', 'nghị định', 'thông tư', 'cư trú', 'tạm trú', 'thường trú', 'xử phạt', 'lệ phí']):
+    if "thuvienphapluat.vn" in domain and _contains_any(query.lower(), ["luật", "nghị định", "thông tư", "cư trú", "tạm trú", "thường trú", "xử phạt", "lệ phí"]):
         score += 0.16
     if any(token in title.lower() for token in ["chính thức", "official"]):
         score += 0.08

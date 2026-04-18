@@ -61,40 +61,32 @@ class AgentRouter:
         db: AsyncSession,
         dataset_id: Optional[str] = None,
         force_mode: Optional[AnswerMode] = None,
-        prefer_web: bool = False,
     ) -> RouteDecision:
         """
         Phân tích query và quyết định chế độ trả lời.
         Nếu force_mode được đặt, bỏ qua logic routing.
         """
         if force_mode:
+            has_docs = await self._has_indexed_documents(db)
             chunks = []
-            if force_mode == AnswerMode.RAG:
+            if has_docs and force_mode in {AnswerMode.RAG, AnswerMode.AI}:
                 chunks = await retriever.retrieve(query, db, dataset_id)
-            elif prefer_web:
-                has_docs = await self._has_indexed_documents(db)
-                chunks = await retriever.retrieve(query, db, dataset_id) if has_docs else []
             return RouteDecision(force_mode, chunks, reason="forced")
 
-        # ── Bước 1: Web realtime chỉ chạy khi người dùng chủ động bật ──
+        # ── Bước 1: Kiểm tra tài liệu có trong DB không ──────────────────
         has_docs = await self._has_indexed_documents(db)
 
-        if prefer_web:
-            support_chunks = await retriever.retrieve(query, db, dataset_id) if has_docs else []
-            return RouteDecision(AnswerMode.AI, support_chunks, reason="prefer_web")
-
-        # ── Bước 2: Kiểm tra tài liệu có trong DB không ──────────────────
         if not has_docs:
             return RouteDecision(AnswerMode.AI, [], reason="no_documents")
 
-        # ── Bước 3: LLM routing ───────────────────────────────────────────
+        # ── Bước 2: LLM routing ───────────────────────────────────────────
         intent = await self._classify_intent(query)
         logger.debug("Router intent: %s for query: %s", intent, query[:50])
 
         if intent == AnswerMode.AI:
             return RouteDecision(AnswerMode.AI, [], reason="llm_router")
 
-        # ── Bước 4: Thử retrieve chunks ───────────────────────────────────
+        # ── Bước 3: Thử retrieve chunks ───────────────────────────────────
         chunks = await retriever.retrieve(query, db, dataset_id)
 
         if not chunks:

@@ -147,7 +147,6 @@ export async function streamChat(
     dataset_id?: string;
     mode?: 'rag' | 'ai';
     session_key?: string;
-    use_web?: boolean;
   },
   callbacks: ChatStreamCallbacks,
   signal?: AbortSignal,

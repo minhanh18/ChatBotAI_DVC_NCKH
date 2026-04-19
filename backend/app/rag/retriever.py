@@ -29,6 +29,8 @@ class RetrievedChunk:
     content: str
     score: float
     position: int
+    document_meta: dict | None = None
+    segment_meta: dict | None = None
 
 
 class VectorRetriever:
@@ -65,13 +67,15 @@ class VectorRetriever:
                 DocumentSegment.position,
                 DocumentSegment.dataset_id,
                 Document.name.label("document_name"),
+                Document.meta.label("document_meta"),
+                DocumentSegment.meta.label("segment_meta"),
                 (1 - distance_expr).label("score"),
             )
             .join(Document, DocumentSegment.document_id == Document.id)
             .where(DocumentSegment.embedding.is_not(None))
             .where(Document.status == "ready")
             .order_by(distance_expr)
-            .limit(self.top_k * 2)  # Lấy dư, rồi lọc theo score
+            .limit(self.top_k * 8)  # Lấy dư nhiều hơn để loại bỏ bản deprecated/trùng lặp
         )
 
         if dataset_id:
@@ -81,22 +85,43 @@ class VectorRetriever:
         rows = result.fetchall()
 
         chunks: list[RetrievedChunk] = []
+        seen_content_hashes: set[str] = set()
         for row in rows:
             score = float(row.score)
-            if score >= self.score_threshold:
-                chunks.append(
-                    RetrievedChunk(
-                        segment_id=str(row.id),
-                        document_id=str(row.document_id),
-                        document_name=row.document_name,
-                        content=row.content,
-                        score=score,
-                        position=row.position,
-                    )
-                )
+            if score < self.score_threshold:
+                continue
 
-        # Trả về top_k chunk tốt nhất
-        return chunks[: self.top_k]
+            document_meta = row.document_meta or {}
+            lifecycle_status = str(document_meta.get("lifecycle_status") or "active").lower()
+            if lifecycle_status in {"deprecated", "archived"}:
+                continue
+            if document_meta.get("is_active_for_retrieval") is False:
+                continue
+
+            segment_meta = row.segment_meta or {}
+            content_hash = str(segment_meta.get("content_hash") or "").strip()
+            if content_hash and content_hash in seen_content_hashes:
+                continue
+            if content_hash:
+                seen_content_hashes.add(content_hash)
+
+            chunks.append(
+                RetrievedChunk(
+                    segment_id=str(row.id),
+                    document_id=str(row.document_id),
+                    document_name=row.document_name,
+                    content=row.content,
+                    score=score,
+                    position=row.position,
+                    document_meta=document_meta,
+                    segment_meta=segment_meta,
+                )
+            )
+
+            if len(chunks) >= self.top_k:
+                break
+
+        return chunks
 
 
 retriever = VectorRetriever()

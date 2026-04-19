@@ -59,10 +59,11 @@ def _extract_pdf(path: Path) -> str:
 
     reader = pypdf.PdfReader(str(path))
     pages: list[str] = []
-    for page in reader.pages:
+    for idx, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
-        if text.strip():
-            pages.append(text)
+        clean_page = text.strip()
+        if clean_page:
+            pages.append(f"[[PAGE:{idx}]]\n{clean_page}")
     return "\n\n".join(pages)
 
 

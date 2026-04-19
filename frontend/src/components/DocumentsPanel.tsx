@@ -29,7 +29,7 @@ function normalizeUploadError(err: any) {
   const message = String(err?.message || err || 'Không thể xử lý tài liệu');
   const normalized = message.toLowerCase();
   if (normalized.includes('429') || normalized.includes('too many requests') || normalized.includes('resource_exhausted') || normalized.includes('quota')) {
-    return 'Upload thất bại: Hệ thống embedding đang bị giới hạn tần suất (429). Vui lòng chờ một lúc rồi thử lại.';
+    return 'Upload tạm chậm vì hệ thống embedding đang bận. Hệ thống sẽ tự thử lại trong nền, vui lòng đợi thêm một chút.';
   }
   return `Upload thất bại: ${message}`;
 }
@@ -38,7 +38,7 @@ function normalizeDocumentErrorMessage(message?: string) {
   if (!message) return message;
   const normalized = message.toLowerCase();
   if (normalized.includes('429') || normalized.includes('too many requests') || normalized.includes('resource_exhausted') || normalized.includes('quota')) {
-    return 'Hệ thống embedding đang bị giới hạn tần suất (429). Vui lòng chờ một lúc rồi reindex hoặc upload lại.';
+    return 'Hệ thống embedding đang bận và đang tự thử lại trong nền. Bạn chưa cần upload lại ngay.';
   }
   return message;
 }

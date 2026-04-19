@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  ExternalLink,
   MessageCircleWarning,
   Pause,
   Play,
@@ -58,6 +57,48 @@ function normalizeMessageLinks(content: string) {
       return `<${normalized}>${trailing}`;
     },
   );
+}
+
+
+function isUsableCitationUrl(url?: string | null) {
+  if (!url) return false;
+  const normalized = url.startsWith('www.') ? `https://${url}` : url;
+  if (!/^https?:\/\//i.test(normalized)) return false;
+  const lower = normalized.toLowerCase();
+  const blocked = [
+    '/404',
+    '/404.html',
+    'page/tim-van-ban.aspx',
+    'vbpqtimkiem.aspx',
+    'portal.aspx?requesturl=',
+    'requesturl=https://vbpl.vn/',
+  ];
+  return !blocked.some((item) => lower.includes(item));
+}
+
+function normalizeCitationHref(url?: string | null) {
+  if (!url) return undefined;
+  return url.startsWith('www.') ? `https://${url}` : url;
+}
+
+function sanitizeCitations(citations: Citation[]) {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const href = normalizeCitationHref(citation.url);
+    if (citation.source_type === 'web') {
+      if (!isUsableCitationUrl(href)) return false;
+      const key = String(href || citation.document_name).toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }
+
+    const key = String(href || citation.document_name).toLowerCase().trim();
+    if (!key) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function stripMarkdownForSpeech(content: string) {
@@ -240,14 +281,14 @@ export function MessageBubble({
               ].join(' ')}
             >
               {!isUser && ttsAvailable && (
-                <div className={`mb-3 rounded-2xl border ${isWarm ? 'border-[#ead8cf] bg-[#fff7f2]' : 'border-slate-200 bg-slate-50'} ${compactWarm ? 'px-3 py-2.5' : 'px-3 py-2.5'}`}>
-                  <div className="flex items-center gap-2.5">
+                <div className={`mb-3 rounded-2xl border ${isWarm ? 'border-[#ead8cf] bg-[#fff7f2]' : 'border-slate-200 bg-slate-50'} ${compactWarm ? 'px-2.5 py-1.5' : 'px-2.5 py-2'}`}>
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={toggleSpeech}
-                      className={`shrink-0 inline-flex items-center justify-center rounded-full ${compactWarm ? 'w-8 h-8' : 'w-9 h-9'} ${isWarm ? 'bg-[#b2694c] text-white' : 'bg-indigo-600 text-white'}`}
+                      className={`shrink-0 inline-flex items-center justify-center rounded-full ${compactWarm ? 'w-7 h-7' : 'w-8 h-8'} ${isWarm ? 'bg-[#b2694c] text-white' : 'bg-indigo-600 text-white'}`}
                       title={ttsSpeaking ? 'Tạm dừng phát' : 'Phát nội dung'}
                     >
-                      {ttsSpeaking ? <Pause size={compactWarm ? 14 : 15} /> : <Play size={compactWarm ? 14 : 15} className="translate-x-[1px]" />}
+                      {ttsSpeaking ? <Pause size={compactWarm ? 12 : 13} /> : <Play size={compactWarm ? 12 : 13} className="translate-x-[0.5px]" />}
                     </button>
                     <input
                       type="range"
@@ -482,6 +523,8 @@ function CitationsPanel({
   onToggle: () => void;
 }) {
   const isWarm = variant === 'user';
+  const visibleCitations = sanitizeCitations(citations);
+  if (visibleCitations.length === 0) return null;
   return (
     <div className={`mt-4 rounded-2xl border ${isWarm ? 'border-[#ead8cf] bg-[#fff7f2]' : 'border-slate-200 bg-slate-50'} ${compact ? 'px-3 py-3' : 'px-4 py-4'}`}>
       <button
@@ -500,35 +543,25 @@ function CitationsPanel({
 
       {open && (
         <div className="mt-3 space-y-2.5">
-          {citations.map((citation, index) => {
-            const href = citation.url
-              ? citation.url.startsWith('www.')
-                ? `https://${citation.url}`
-                : citation.url
-              : undefined;
+          {visibleCitations.map((citation, index) => {
+            const href = normalizeCitationHref(citation.url);
+            const title = citation.document_name || `Nguồn ${index + 1}`;
             return (
               <div key={`${citation.segment_id || citation.document_name}-${index}`} className={`rounded-2xl border ${isWarm ? 'border-[#ead8cf] bg-white' : 'border-slate-200 bg-white'} ${compact ? 'px-3 py-2.5' : 'px-3.5 py-3'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className={`font-medium ${compact ? 'text-[11px]' : 'text-xs'} ${isWarm ? 'text-[#734232]' : 'text-slate-700'}`}>
-                      {citation.document_name || `Nguồn ${index + 1}`}
-                    </div>
-                    {citation.content && (
-                      <div className={`mt-1 line-clamp-3 ${compact ? 'text-[10px]' : 'text-[11px]'} ${isWarm ? 'text-[#8a6a5b]' : 'text-slate-500'}`}>
-                        {citation.content}
-                      </div>
-                    )}
-                  </div>
-                  {href && (
+                <div className="min-w-0">
+                  {isUsableCitationUrl(href) ? (
                     <a
                       href={href}
                       target="_blank"
                       rel="noreferrer"
-                      className={`shrink-0 inline-flex items-center gap-1 rounded-full border ${compact ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1 text-[11px]'} ${isWarm ? 'border-[#dfc2b4] text-[#9a624a] hover:bg-[#fff7f2]' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                      className={`font-medium underline-offset-2 hover:underline ${compact ? 'text-[11px]' : 'text-xs'} ${isWarm ? 'text-[#734232]' : 'text-slate-700'}`}
                     >
-                      Mở link
-                      <ExternalLink size={compact ? 10 : 11} />
+                      {title}
                     </a>
+                  ) : (
+                    <div className={`font-medium ${compact ? 'text-[11px]' : 'text-xs'} ${isWarm ? 'text-[#734232]' : 'text-slate-700'}`}>
+                      {title}
+                    </div>
                   )}
                 </div>
               </div>
@@ -543,9 +576,9 @@ function CitationsPanel({
 function ThinkingDots({ compact }: { compact: boolean }) {
   return (
     <div className={`flex items-center gap-2 ${compact ? 'py-1' : 'py-1.5'}`} aria-label="Đang phản hồi">
-      <span className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-2 h-2' : 'w-2.5 h-2.5'}`} style={{ animationDelay: '0ms' }} />
-      <span className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-2 h-2' : 'w-2.5 h-2.5'}`} style={{ animationDelay: '180ms' }} />
-      <span className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-2 h-2' : 'w-2.5 h-2.5'}`} style={{ animationDelay: '360ms' }} />
+      <span className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-1.5 h-1.5' : 'w-2 h-2'}`} style={{ animationDelay: '0ms' }} />
+      <span className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-1.5 h-1.5' : 'w-2 h-2'}`} style={{ animationDelay: '180ms' }} />
+      <span className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-1.5 h-1.5' : 'w-2 h-2'}`} style={{ animationDelay: '360ms' }} />
     </div>
   );
 }

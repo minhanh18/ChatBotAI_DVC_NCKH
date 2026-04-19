@@ -10,14 +10,20 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.db import Conversation, Dataset, Document, Message, MessageFeedback, UsageLog, get_db
+from app.rag.lifecycle import lifecycle_status, version_of
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 security = HTTPBasic()
+
+
+def _user_conversation_clause():
+    return or_(Conversation.session_key.is_(None), ~Conversation.session_key.like("admin::%"))
+
 
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
@@ -49,40 +55,46 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(verify_admin))
     since_24h = now - timedelta(hours=24)
     since_7d = now - timedelta(days=7)
 
-    # Tổng conversations
-    total_convs = (await db.execute(select(func.count()).select_from(Conversation))).scalar()
-    # Conversations hôm nay
+    total_convs = (await db.execute(
+        select(func.count()).select_from(Conversation).where(_user_conversation_clause())
+    )).scalar()
     convs_24h = (await db.execute(
-        select(func.count()).select_from(Conversation).where(Conversation.created_at >= since_24h)
+        select(func.count()).select_from(Conversation).where(_user_conversation_clause(), Conversation.created_at >= since_24h)
     )).scalar()
 
-    # Tổng messages
-    total_msgs = (await db.execute(select(func.count()).select_from(Message))).scalar()
+    total_msgs = (await db.execute(
+        select(func.count())
+        .select_from(Message)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(_user_conversation_clause())
+    )).scalar()
     msgs_24h = (await db.execute(
-        select(func.count()).select_from(Message).where(Message.created_at >= since_24h)
+        select(func.count())
+        .select_from(Message)
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(_user_conversation_clause(), Message.created_at >= since_24h)
     )).scalar()
 
-    # RAG vs AI tỷ lệ (7 ngày)
     mode_stats = (await db.execute(
         select(UsageLog.answer_mode, func.count().label("cnt"))
-        .where(UsageLog.created_at >= since_7d)
+        .join(Conversation, Conversation.id == UsageLog.conversation_id, isouter=True)
+        .where(_user_conversation_clause(), UsageLog.created_at >= since_7d)
         .group_by(UsageLog.answer_mode)
     )).fetchall()
     mode_breakdown = {row.answer_mode: row.cnt for row in mode_stats}
 
-    # Latency trung bình
     avg_latency = (await db.execute(
         select(func.avg(UsageLog.latency_ms))
-        .where(UsageLog.created_at >= since_7d)
+        .join(Conversation, Conversation.id == UsageLog.conversation_id, isouter=True)
+        .where(_user_conversation_clause(), UsageLog.created_at >= since_7d)
     )).scalar()
 
-    # Tổng tokens dùng
     total_tokens = (await db.execute(
         select(func.sum(UsageLog.tokens_used))
-        .where(UsageLog.created_at >= since_7d)
+        .join(Conversation, Conversation.id == UsageLog.conversation_id, isouter=True)
+        .where(_user_conversation_clause(), UsageLog.created_at >= since_7d)
     )).scalar()
 
-    # Tài liệu
     doc_stats = (await db.execute(
         select(Document.status, func.count().label("cnt"))
         .group_by(Document.status)
@@ -90,7 +102,8 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(verify_admin))
 
     feedback_7d = (await db.execute(
         select(MessageFeedback.rating, func.count().label("cnt"))
-        .where(MessageFeedback.created_at >= since_7d)
+        .join(Conversation, Conversation.id == MessageFeedback.conversation_id, isouter=True)
+        .where(_user_conversation_clause(), MessageFeedback.created_at >= since_7d)
         .group_by(MessageFeedback.rating)
     )).fetchall()
 
@@ -117,6 +130,8 @@ async def usage_logs(
 ):
     stmt = (
         select(UsageLog)
+        .join(Conversation, Conversation.id == UsageLog.conversation_id, isouter=True)
+        .where(_user_conversation_clause())
         .order_by(UsageLog.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -150,14 +165,16 @@ async def daily_stats(days: int = 14, db: AsyncSession = Depends(get_db), _=Depe
     since = datetime.utcnow() - timedelta(days=days)
     result = await db.execute(
         text("""
-            SELECT DATE(created_at) as day,
+            SELECT DATE(u.created_at) as day,
                    COUNT(*) as total,
-                   SUM(CASE WHEN answer_mode = 'rag' THEN 1 ELSE 0 END) as rag_count,
-                   SUM(CASE WHEN answer_mode = 'ai' THEN 1 ELSE 0 END) as ai_count,
-                   AVG(latency_ms) as avg_latency
-            FROM usage_logs
-            WHERE created_at >= :since
-            GROUP BY DATE(created_at)
+                   SUM(CASE WHEN u.answer_mode = 'rag' THEN 1 ELSE 0 END) as rag_count,
+                   SUM(CASE WHEN u.answer_mode = 'ai' THEN 1 ELSE 0 END) as ai_count,
+                   AVG(u.latency_ms) as avg_latency
+            FROM usage_logs u
+            LEFT JOIN conversations c ON c.id = u.conversation_id
+            WHERE u.created_at >= :since
+              AND (c.session_key IS NULL OR c.session_key NOT LIKE 'admin::%')
+            GROUP BY DATE(u.created_at)
             ORDER BY day
         """),
         {"since": since},
@@ -197,6 +214,8 @@ async def admin_list_documents(
             "chunk_count": d.chunk_count,
             "file_size": d.file_size,
             "error": d.error_message,
+            "version": version_of(d.meta),
+            "lifecycle_status": lifecycle_status(d.meta),
             "created_at": d.created_at.isoformat(),
         }
         for d in docs
@@ -212,7 +231,10 @@ async def admin_conversations(
     _=Depends(verify_admin),
 ):
     result = await db.execute(
-        select(Conversation).order_by(Conversation.updated_at.desc()).limit(limit)
+        select(Conversation)
+        .where(_user_conversation_clause())
+        .order_by(Conversation.updated_at.desc())
+        .limit(limit)
     )
     convs = result.scalars().all()
     return [
@@ -255,6 +277,7 @@ async def feedback_logs(
         select(MessageFeedback, Message.content, Conversation.title)
         .join(Message, Message.id == MessageFeedback.message_id)
         .join(Conversation, Conversation.id == MessageFeedback.conversation_id, isouter=True)
+        .where(_user_conversation_clause())
         .order_by(MessageFeedback.created_at.desc())
         .limit(limit)
         .offset(offset)

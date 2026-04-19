@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import uuid
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -14,16 +14,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.admin import verify_admin
 from app.config import settings
 from app.models.db import Dataset, Document, DocumentSegment, get_db
+from app.rag.lifecycle import (
+    build_document_meta,
+    compute_file_hash,
+    find_duplicate_document,
+    find_latest_same_name_document,
+    lifecycle_status,
+    merge_meta,
+    normalize_document_name,
+    version_of,
+)
+from app.rag.source_hints import resolve_document_source_url
 from app.tasks.ingest import ingest_document_task
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  DATASET
-# ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("/datasets")
 async def create_dataset(name: str = Form(...), description: str = Form(""), db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
@@ -40,10 +46,7 @@ async def list_datasets(db: AsyncSession = Depends(get_db), _=Depends(verify_adm
     datasets = result.scalars().all()
     out = []
     for ds in datasets:
-        # Đếm document
-        doc_result = await db.execute(
-            select(Document).where(Document.dataset_id == ds.id)
-        )
+        doc_result = await db.execute(select(Document).where(Document.dataset_id == ds.id))
         docs = doc_result.scalars().all()
         out.append({
             "id": str(ds.id),
@@ -51,6 +54,7 @@ async def list_datasets(db: AsyncSession = Depends(get_db), _=Depends(verify_adm
             "description": ds.description,
             "document_count": len(docs),
             "ready_count": sum(1 for d in docs if d.status == "ready"),
+            "active_count": sum(1 for d in docs if lifecycle_status(d.meta) == "active"),
             "created_at": ds.created_at.isoformat(),
         })
     return out
@@ -66,10 +70,6 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db), _=
     return {"message": "Đã xoá dataset"}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  DOCUMENT UPLOAD & MANAGEMENT
-# ══════════════════════════════════════════════════════════════════════════════
-
 @router.post("/datasets/{dataset_id}/upload")
 async def upload_document(
     dataset_id: str,
@@ -77,29 +77,58 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_admin),
 ):
-    """Upload tài liệu và bắt đầu indexing bất đồng bộ."""
-    # Kiểm tra dataset tồn tại
     ds = (await db.execute(select(Dataset).where(Dataset.id == UUID(dataset_id)))).scalar_one_or_none()
     if not ds:
         raise HTTPException(404, "Dataset không tồn tại")
 
-    # Kiểm tra định dạng
     ext = Path(file.filename or "").suffix.lower().lstrip(".")
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Định dạng không hỗ trợ. Cho phép: {settings.ALLOWED_EXTENSIONS}")
 
-    # Kiểm tra kích thước
     content = await file.read()
     size_mb = len(content) / (1024 * 1024)
     if size_mb > settings.MAX_UPLOAD_SIZE_MB:
         raise HTTPException(400, f"File quá lớn. Tối đa {settings.MAX_UPLOAD_SIZE_MB}MB")
 
-    # Lưu file
+    file_hash = compute_file_hash(content)
+    normalized_name = normalize_document_name(file.filename or "")
+    source_url = resolve_document_source_url(file.filename or "", {})
+
+    existing_docs = (
+        await db.execute(
+            select(Document)
+            .where(Document.dataset_id == UUID(dataset_id))
+            .order_by(Document.created_at.desc())
+        )
+    ).scalars().all()
+
+    duplicate_doc = find_duplicate_document(existing_docs, file_hash=file_hash)
+    if duplicate_doc:
+        return {
+            "id": str(duplicate_doc.id),
+            "name": duplicate_doc.name,
+            "status": duplicate_doc.status,
+            "duplicate_of": str(duplicate_doc.id),
+            "message": "Tài liệu trùng nội dung đã tồn tại, hệ thống không index lặp lại.",
+        }
+
+    previous_doc = find_latest_same_name_document(existing_docs, normalized_name=normalized_name)
+    previous_doc_id = str(previous_doc.id) if previous_doc else None
+    next_version = (version_of(previous_doc.meta) + 1) if previous_doc else 1
+
     doc_id = str(uuid.uuid4())
     file_path = Path(settings.UPLOAD_DIR) / f"{doc_id}.{ext}"
     file_path.write_bytes(content)
 
-    # Tạo Document record
+    doc_meta = build_document_meta(
+        file_hash=file_hash,
+        normalized_name=normalized_name,
+        version=next_version,
+        source_url=source_url,
+        previous_document_id=previous_doc_id,
+    )
+    doc_meta["uploaded_at"] = datetime.utcnow().isoformat()
+
     doc = Document(
         id=UUID(doc_id),
         dataset_id=UUID(dataset_id),
@@ -108,19 +137,28 @@ async def upload_document(
         file_type=ext,
         file_size=len(content),
         status="pending",
-        meta={"uploaded_at": __import__("datetime").datetime.utcnow().isoformat(), "version": 1},
+        meta=doc_meta,
     )
     db.add(doc)
-    await db.commit()
 
-    # Đẩy vào Celery queue
+    if previous_doc and lifecycle_status(previous_doc.meta) == "active":
+        prev_meta = merge_meta(previous_doc.meta, {
+            "lifecycle_status": "deprecated",
+            "is_active_for_retrieval": False,
+            "superseded_by_document_id": doc_id,
+        })
+        previous_doc.meta = prev_meta
+
+    await db.commit()
     ingest_document_task.delay(doc_id)
 
     return {
         "id": doc_id,
         "name": doc.name,
         "status": "pending",
-        "message": "Tài liệu đang được xử lý. Sẽ sẵn sàng trong vài giây.",
+        "version": next_version,
+        "supersedes_document_id": previous_doc_id,
+        "message": "Tài liệu đang được xử lý. Phiên bản mới sẽ được ưu tiên cho RAG khi index xong.",
     }
 
 
@@ -141,6 +179,12 @@ async def list_documents(dataset_id: str, db: AsyncSession = Depends(get_db), _=
             "status": d.status,
             "chunk_count": d.chunk_count,
             "error_message": d.error_message,
+            "version": version_of(d.meta),
+            "lifecycle_status": lifecycle_status(d.meta),
+            "is_active_for_retrieval": bool((d.meta or {}).get("is_active_for_retrieval", True)),
+            "source_url": (d.meta or {}).get("source_url"),
+            "document_number": (d.meta or {}).get("document_number"),
+            "document_type": (d.meta or {}).get("document_type"),
             "created_at": d.created_at.isoformat(),
         }
         for d in docs
@@ -158,9 +202,8 @@ async def get_document(document_id: str, db: AsyncSession = Depends(get_db), _=D
         "status": doc.status,
         "chunk_count": doc.chunk_count,
         "error_message": doc.error_message,
+        "meta": doc.meta or {},
     }
-
-
 
 
 @router.patch("/documents/{document_id}")
@@ -177,8 +220,41 @@ async def rename_document(
     if not clean_name:
         raise HTTPException(400, "Tên tài liệu không được để trống")
     doc.name = clean_name
+    doc.meta = merge_meta(doc.meta, {"normalized_name": normalize_document_name(clean_name)})
     await db.commit()
     return {"message": "Đã cập nhật tên tài liệu", "id": str(doc.id), "name": doc.name}
+
+
+@router.post("/documents/{document_id}/activate")
+async def activate_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+    doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document không tồn tại")
+
+    normalized_name = (doc.meta or {}).get("normalized_name") or normalize_document_name(doc.name)
+    siblings = (
+        await db.execute(select(Document).where(Document.dataset_id == doc.dataset_id))
+    ).scalars().all()
+    for sibling in siblings:
+        meta = sibling.meta or {}
+        if (meta.get("normalized_name") or normalize_document_name(sibling.name)) != normalized_name:
+            continue
+        if sibling.id == doc.id:
+            sibling.meta = merge_meta(meta, {"lifecycle_status": "active", "is_active_for_retrieval": True})
+        else:
+            sibling.meta = merge_meta(meta, {"lifecycle_status": "deprecated", "is_active_for_retrieval": False})
+    await db.commit()
+    return {"message": "Đã kích hoạt phiên bản tài liệu này cho RAG."}
+
+
+@router.post("/documents/{document_id}/deprecate")
+async def deprecate_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+    doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Document không tồn tại")
+    doc.meta = merge_meta(doc.meta, {"lifecycle_status": "deprecated", "is_active_for_retrieval": False})
+    await db.commit()
+    return {"message": "Đã đánh dấu tài liệu là deprecated."}
 
 
 @router.delete("/documents/{document_id}")
@@ -187,33 +263,47 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(get_db), 
     if not doc:
         raise HTTPException(404, "Document không tồn tại")
 
-    # Xoá file vật lý
+    was_active = lifecycle_status(doc.meta) == "active"
+    normalized_name = (doc.meta or {}).get("normalized_name") or normalize_document_name(doc.name)
+    dataset_id = doc.dataset_id
+
     if doc.file_path and Path(doc.file_path).exists():
         Path(doc.file_path).unlink()
 
     await db.delete(doc)
+    await db.flush()
+
+    if was_active:
+        siblings = (
+            await db.execute(select(Document).where(Document.dataset_id == dataset_id))
+        ).scalars().all()
+        candidates = [s for s in siblings if ((s.meta or {}).get("normalized_name") or normalize_document_name(s.name)) == normalized_name]
+        if candidates:
+            candidates.sort(key=lambda item: version_of(item.meta), reverse=True)
+            latest = candidates[0]
+            latest.meta = merge_meta(latest.meta, {"lifecycle_status": "active", "is_active_for_retrieval": True})
+
     await db.commit()
     return {"message": "Đã xoá tài liệu"}
 
 
 @router.post("/documents/{document_id}/reindex")
 async def reindex_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
-    """Re-index lại tài liệu (dùng khi thay đổi config chunking)."""
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document không tồn tại")
 
     doc.status = "pending"
     doc.error_message = None
+    doc.meta = merge_meta(doc.meta, {"last_reindex_requested_at": datetime.utcnow().isoformat()})
     await db.commit()
 
     ingest_document_task.delay(document_id)
-    return {"message": "Đã bắt đầu re-index"}
+    return {"message": "Đã bắt đầu re-index có kiểm soát."}
 
 
 @router.get("/documents/{document_id}/segments")
 async def list_segments(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
-    """Xem các chunk đã được tạo (để debug chunking)."""
     result = await db.execute(
         select(DocumentSegment)
         .where(DocumentSegment.document_id == UUID(document_id))
@@ -227,6 +317,12 @@ async def list_segments(document_id: str, db: AsyncSession = Depends(get_db), _=
             "content": s.content[:200] + ("…" if len(s.content) > 200 else ""),
             "word_count": s.word_count,
             "has_embedding": s.embedding is not None,
+            "page_start": (s.meta or {}).get("page_start"),
+            "page_end": (s.meta or {}).get("page_end"),
+            "location_label": (s.meta or {}).get("location_label"),
+            "article_ref": (s.meta or {}).get("article_ref"),
+            "clause_ref": (s.meta or {}).get("clause_ref"),
+            "legal_topic": (s.meta or {}).get("legal_topic"),
         }
         for s in segs
     ]

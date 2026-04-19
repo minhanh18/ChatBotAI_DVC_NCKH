@@ -27,12 +27,31 @@ import {
 const USER_BOT_AVATAR = '/static/assets/img/chatbot/icon_chatbot_circle_final.png';
 const STREAM_IDLE: StreamState = { active: false, text: '', citations: [] };
 
-function ensureSessionKey(storageKey: string) {
+function ensureSessionKey(storageKey: string, sessionScope: 'user' | 'admin') {
   const existing = sessionStorage.getItem(storageKey);
-  if (existing) return existing;
-  const created = `sk_${Math.random().toString(36).slice(2)}`;
+  if (existing) {
+    if (sessionScope === 'admin' && !existing.startsWith('admin::')) {
+      const upgraded = `admin::${existing}`;
+      sessionStorage.setItem(storageKey, upgraded);
+      return upgraded;
+    }
+    return existing;
+  }
+  const created = `${sessionScope === 'admin' ? 'admin::' : ''}sk_${Math.random().toString(36).slice(2)}`;
   sessionStorage.setItem(storageKey, created);
   return created;
+}
+
+function mergeCitations(current: Citation[], incoming: Citation[]) {
+  const merged: Citation[] = [];
+  const seen = new Set<string>();
+  for (const citation of [...current, ...incoming]) {
+    const key = `${citation.url || citation.segment_id || citation.document_name}`.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(citation);
+  }
+  return merged;
 }
 
 function normalizeConversationTitle(title: string) {
@@ -66,7 +85,7 @@ export function ChatWindow({
   const showHistory = !hideHistory && !standalone;
   const sessionStorageKey = `chatbot_sk_${sessionScope}`;
   const pinnedStorageKey = `chatbot_pinned_conversations_${sessionScope}`;
-  const sessionKey = useMemo(() => ensureSessionKey(sessionStorageKey), [sessionStorageKey]);
+  const sessionKey = useMemo(() => ensureSessionKey(sessionStorageKey, sessionScope), [sessionScope, sessionStorageKey]);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [pendingUserText, setPendingUserText] = useState('');
@@ -97,9 +116,11 @@ export function ChatWindow({
   const speechStopRequestedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const latestAssistantRef = useRef<HTMLDivElement>(null);
+  const latestReplyAnchorRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const pendingAssistantTopRef = useRef(false);
+  const autoScrolledForCurrentReplyRef = useRef(false);
 
   const botAvatar = USER_BOT_AVATAR;
   const appTitle = 'Trợ lý hỗ trợ công dân';
@@ -115,6 +136,12 @@ export function ChatWindow({
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+    });
+  }, []);
+
+  const scrollLatestReplyIntoView = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    requestAnimationFrame(() => {
+      latestReplyAnchorRef.current?.scrollIntoView({ behavior, block: 'start' });
     });
   }, []);
 
@@ -188,6 +215,12 @@ export function ChatWindow({
   }, [messages, pendingUserText, stream, scrollToBottom]);
 
   useEffect(() => {
+    if (!stream.active || autoScrolledForCurrentReplyRef.current) return;
+    autoScrolledForCurrentReplyRef.current = true;
+    scrollLatestReplyIntoView('smooth');
+  }, [scrollLatestReplyIntoView, stream.active]);
+
+  useEffect(() => {
     if (!pendingAssistantTopRef.current || !lastAssistantMessageId) return;
     requestAnimationFrame(() => {
       const viewport = scrollViewportRef.current;
@@ -211,6 +244,7 @@ export function ChatWindow({
       setPendingUserText('');
       setPendingUserTime(null);
       setActiveConvId(convId);
+      autoScrolledForCurrentReplyRef.current = false;
       loadMessages(convId);
     },
     [loadMessages],
@@ -226,6 +260,7 @@ export function ChatWindow({
     setInput('');
     setSelectedImage(null);
     setVoiceStatus('');
+    autoScrolledForCurrentReplyRef.current = false;
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
@@ -323,7 +358,7 @@ export function ChatWindow({
       setIsListening(false);
       recognitionRef.current = null;
       if (shouldSubmit) {
-        setVoiceStatus('Đã ghi âm xong, đang gửi...');
+        setVoiceStatus('');
         setTimeout(() => {
           submitMessage(finalTranscript.trim());
         }, 0);
@@ -350,6 +385,8 @@ export function ChatWindow({
       setPendingUserText(optimisticUserText);
       setPendingUserTime(new Date().toISOString());
       setStream({ active: true, text: '', citations: [] });
+      setVoiceStatus('');
+      autoScrolledForCurrentReplyRef.current = false;
 
       const abort = new AbortController();
       abortRef.current = abort;
@@ -368,7 +405,7 @@ export function ChatWindow({
             setStream((s) => ({ ...s, text: s.text + token }));
           },
           onCitations: (citations: Citation[]) => {
-            setStream((s) => ({ ...s, citations }));
+            setStream((s) => ({ ...s, citations: mergeCitations(s.citations, citations) }));
           },
           onDone: async () => {
             setStream(STREAM_IDLE);
@@ -376,6 +413,7 @@ export function ChatWindow({
             setPendingUserTime(null);
             setVoiceStatus('');
             pendingAssistantTopRef.current = true;
+            autoScrolledForCurrentReplyRef.current = false;
             if (resolvedConvId) {
               await loadMessages(resolvedConvId);
             }
@@ -488,7 +526,7 @@ export function ChatWindow({
 
   return (
     <div
-      className={`h-full flex overflow-hidden ${
+      className={`h-full w-full max-w-full flex overflow-hidden ${
         isUserUi ? 'bg-[linear-gradient(180deg,#f8f1ed_0%,#f3f4fa_100%)]' : 'bg-[linear-gradient(180deg,#f8f1ed_0%,#f3f4fa_100%)]'
       }`}
     >
@@ -644,7 +682,7 @@ export function ChatWindow({
 
         <div
           ref={scrollViewportRef}
-          className={`flex-1 min-h-0 overflow-y-auto ${compactUi ? 'px-3 py-4' : 'px-4 md:px-6 py-4'} ${dragOver ? 'ring-2 ring-inset ring-[#c89279]' : ''}`}
+          className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden ${compactUi ? 'px-2.5 py-3' : 'px-4 md:px-6 py-4'} ${dragOver ? 'ring-2 ring-inset ring-[#c89279]' : ''}`}
           onDragOver={(e) => {
             e.preventDefault();
             setDragOver(true);
@@ -663,21 +701,25 @@ export function ChatWindow({
               </div>
             </div>
           ) : (
-            <div className="max-w-[920px] mx-auto">
+            <div className={`mx-auto ${compactUi ? 'max-w-full' : 'max-w-[920px]'}`}>
               {messages.map((message) => (
-                <div
-                  key={message.id}
-                  ref={message.role === 'assistant' && message.id === lastAssistantMessageId ? latestAssistantRef : undefined}
-                  className="mx-auto max-w-[920px]"
-                >
-                  <MessageBubble
-                    message={message}
-                    botAvatar={botAvatar}
-                    variant={isUserUi ? 'user' : 'admin'}
-                    onFeedback={message.role === 'assistant' ? submitFeedback : undefined}
-                    compact={compactUi}
-                  />
-                </div>
+                <React.Fragment key={message.id}>
+                  {message.role === 'assistant' && message.id === lastAssistantMessageId && !stream.active && (
+                    <div ref={latestReplyAnchorRef} className="h-px" />
+                  )}
+                  <div
+                    ref={message.role === 'assistant' && message.id === lastAssistantMessageId ? latestAssistantRef : undefined}
+                    className={`mx-auto ${compactUi ? 'max-w-full' : 'max-w-[920px]'}`}
+                  >
+                    <MessageBubble
+                      message={message}
+                      botAvatar={botAvatar}
+                      variant={isUserUi ? 'user' : 'admin'}
+                      onFeedback={message.role === 'assistant' ? submitFeedback : undefined}
+                      compact={compactUi}
+                    />
+                  </div>
+                </React.Fragment>
               ))}
 
               {pendingUserText && (
@@ -696,7 +738,9 @@ export function ChatWindow({
               )}
 
               {(stream.active || stream.error) && (
-                <MessageBubble
+                <>
+                  {stream.active && <div ref={latestReplyAnchorRef} className="h-px" />}
+                  <MessageBubble
                   message={{
                     id: 'streaming-assistant',
                     role: 'assistant',
@@ -712,19 +756,19 @@ export function ChatWindow({
                   variant={isUserUi ? 'user' : 'admin'}
                   compact={compactUi}
                 />
+                </>
               )}
-
               <div ref={messagesEndRef} />
             </div>
           )}
         </div>
 
         <div
-          className={`shrink-0 border-t ${compactUi ? 'px-3 py-2.5' : 'px-4 md:px-6 py-2.5'} ${
+          className={`shrink-0 border-t ${compactUi ? 'px-2.5 py-2' : 'px-4 md:px-6 py-2.5'} ${
             isUserUi ? 'bg-[#f3f4fa] border-[#f3f4fa]' : 'bg-[#f3f4fa] border-[#f3f4fa]'
           }`}
         >
-          <div className="max-w-5xl mx-auto">
+          <div className={`mx-auto ${compactUi ? 'max-w-full' : 'max-w-5xl'}`}>
             {stream.error && (
               <div
                 className={`mb-3 rounded-2xl border px-4 py-3 text-sm flex items-center gap-2 ${
@@ -748,10 +792,10 @@ export function ChatWindow({
               </div>
             )}
 
-            {voiceStatus && <div className={`mb-2 ${compactUi ? 'text-[12px]' : 'text-sm'} ${isUserUi ? 'text-[#9b6e58]' : 'text-[#9b6e58]'}`}>{voiceStatus}</div>}
+            {voiceStatus && <div className={`mb-2 ${compactUi ? 'text-[11px]' : 'text-sm'} ${isUserUi ? 'text-[#9b6e58]' : 'text-[#9b6e58]'}`}>{voiceStatus}</div>}
 
             <div
-              className={`rounded-[24px] border ${compactUi ? 'px-3 py-2 gap-2' : 'px-4 py-1 gap-2.5'} flex items-center shadow-sm ${
+              className={`rounded-[24px] border ${compactUi ? 'px-2.5 py-1.5 gap-1.5' : 'px-4 py-1 gap-2.5'} flex items-center shadow-sm ${
                 isUserUi ? 'border-[#e0c5b8] bg-white/95 backdrop-blur-sm' : 'border-[#e0c5b8] bg-white/95 backdrop-blur-sm'
               }`}
             >
@@ -828,7 +872,7 @@ export function ChatWindow({
                 }`}
                 title="Gửi"
               >
-                <Send size={compactUi ? 14 : 15} className="block shrink-0 translate-x-[1px] translate-y-[1px]" />
+                <Send size={compactUi ? 14 : 15} className="block shrink-0" />
               </button>
             </div>
 

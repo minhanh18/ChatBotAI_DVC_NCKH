@@ -2274,25 +2274,32 @@
 
   <style id="chatfab-final-fix">
     #chatFab.chat-fab{
-      width:56px !important;
-      min-width:56px !important;
-      max-width:56px !important;
-      height:56px !important;
+      width:54px !important;
+      min-width:54px !important;
+      max-width:54px !important;
+      height:54px !important;
       padding:6px 8px !important;
       display:flex !important;
       align-items:center !important;
-      justify-content:flex-end !important;
-      gap:0 !important;
+      justify-content:flex-start !important;
+      gap:10px !important;
       overflow:hidden !important;
+      border:1px solid #e3cfc4 !important;
+      border-radius:999px !important;
+      background:#fff !important;
+      box-shadow:0 8px 22px rgba(120,75,56,.12) !important;
+      transition:width .2s ease, box-shadow .18s ease, opacity .18s ease !important;
       transform:none !important;
       transform-origin:right center !important;
-      transition:width .2s ease, box-shadow .18s ease !important;
+      will-change:width, opacity !important;
+      backface-visibility:hidden !important;
     }
     #chatFab.chat-fab:hover,
     #chatFab.chat-fab:focus-visible{
-      width:172px !important;
-      min-width:172px !important;
-      max-width:172px !important;
+      width:154px !important;
+      min-width:154px !important;
+      max-width:154px !important;
+      box-shadow:0 12px 26px rgba(120,75,56,.16) !important;
     }
     #chatFab .chat-fab-icon-wrap{
       order:2 !important;
@@ -2305,6 +2312,8 @@
       justify-content:center !important;
       position:relative !important;
       z-index:2 !important;
+      border-radius:999px !important;
+      overflow:hidden !important;
     }
     #chatFab img{
       width:40px !important;
@@ -2313,14 +2322,17 @@
       border-radius:50% !important;
       object-fit:cover !important;
       background:transparent !important;
+      pointer-events:none !important;
+      -webkit-user-drag:none !important;
+      user-select:none !important;
     }
     #chatFab .chat-fab-label{
       order:1 !important;
       position:absolute !important;
-      left:16px !important;
+      left:14px !important;
       right:56px !important;
       top:50% !important;
-      transform:translateY(-50%) translateX(-8px) !important;
+      transform:translateY(-50%) translateX(-6px) !important;
       margin:0 !important;
       display:block !important;
       white-space:nowrap !important;
@@ -2333,6 +2345,7 @@
       color:#9a624a !important;
       pointer-events:none !important;
       z-index:1 !important;
+      transition:opacity .16s ease, transform .16s ease !important;
     }
     #chatFab:hover .chat-fab-label,
     #chatFab:focus-visible .chat-fab-label{
@@ -2342,11 +2355,13 @@
     #chatFab.dragging,
     #chatFab.dragging:hover,
     #chatFab.dragging:focus-visible{
-      width:56px !important;
-      min-width:56px !important;
-      max-width:56px !important;
+      width:54px !important;
+      min-width:54px !important;
+      max-width:54px !important;
+      box-shadow:0 8px 22px rgba(120,75,56,.12) !important;
     }
     #chatFab.dragging .chat-fab-label{opacity:0 !important;}
+    #chatFab.hidden{opacity:0 !important;pointer-events:none !important;}
     @media (max-width: 640px){
       #chatFab.chat-fab,
       #chatFab.chat-fab:hover,

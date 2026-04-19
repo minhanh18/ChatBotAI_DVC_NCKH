@@ -46,6 +46,7 @@ LEGAL_OBJECT_KEYWORDS = [
     "thủ tục", "hành chính", "căn cứ pháp lý",
     "cư trú", "tạm trú", "thường trú", "cccd", "căn cước", "hộ tịch", "thuế",
     "dịch vụ công", "hộ khẩu", "khai sinh", "kết hôn", "ly hôn",
+    "bảo hiểm", "bảo hiểm y tế", "bảo hiểm xã hội", "bhyt", "bhxh",
 ]
 
 DISPUTE_RECHECK_KEYWORDS = [
@@ -63,13 +64,31 @@ QUERY_ABBREVIATIONS = {
 }
 
 PRIORITY_DOMAINS = [
-    "vanban.chinhphu.vn",
-    "xaydungchinhsach.chinhphu.vn",
-    "moj.gov.vn",
+    "vbpl.vn",
     "dichvucong.gov.vn",
-    "mps.gov.vn",
-    "mof.gov.vn",
+    "luatvietnam.vn",
     "thuvienphapluat.vn",
+    "baohiemxahoi.gov.vn",
+    "chinhphu.vn",
+]
+
+BLOCKED_URL_PATTERNS = [
+    "/404",
+    "/404.html",
+    "page/tim-van-ban.aspx",
+    "vbpqtimkiem.aspx",
+    "portal.aspx?requesturl=",
+    "requesturl=https://vbpl.vn/",
+    "pages/portal.aspx",
+]
+
+BLOCKED_PAGE_PATTERNS = [
+    "không tìm thấy trang",
+    "url không tồn tại",
+    "tìm kiếm văn bản",
+    "tra cứu văn bản",
+    "kết quả tìm kiếm",
+    "văn bản pháp luật liên quan sau",
 ]
 
 
@@ -214,14 +233,19 @@ async def search_and_fetch(query: str) -> list[WebResult]:
         raw_results: list[dict] = []
         for variant in build_search_queries(query):
             try:
-                raw_results.extend(await duckduckgo_search(client, variant))
+                ddg_results = await duckduckgo_search(client, variant)
+                if ddg_results:
+                    raw_results.extend(ddg_results)
             except Exception as exc:
-                logger.debug("DuckDuckGo query failed for %s: %s", variant, exc)
+                logger.warning("DuckDuckGo query failed for %s: %s", variant, exc)
+
             if not raw_results:
                 try:
-                    raw_results.extend(await bing_search(client, variant))
+                    bing_results = await bing_search(client, variant)
+                    if bing_results:
+                        raw_results.extend(bing_results)
                 except Exception as exc:
-                    logger.debug("Bing query failed for %s: %s", variant, exc)
+                    logger.warning("Bing query failed for %s: %s", variant, exc)
 
         if not raw_results:
             return []
@@ -231,6 +255,8 @@ async def search_and_fetch(query: str) -> list[WebResult]:
         for item in raw_results:
             url = item.get("url", "")
             if not url or url in seen_urls:
+                continue
+            if not is_candidate_url_allowed(url, query):
                 continue
             seen_urls.add(url)
             deduped.append(item)
@@ -249,6 +275,7 @@ async def search_and_fetch(query: str) -> list[WebResult]:
 async def duckduckgo_search(client: httpx.AsyncClient, query: str) -> list[dict]:
     response = await client.get("https://html.duckduckgo.com/html/", params={"q": query, "kl": "vn-vi"})
     response.raise_for_status()
+
     soup = BeautifulSoup(response.text, "html.parser")
 
     results: list[dict] = []
@@ -257,9 +284,13 @@ async def duckduckgo_search(client: httpx.AsyncClient, query: str) -> list[dict]
         link = block.select_one("a.result__a") or block.select_one(".result__title a")
         if not link:
             continue
+
         raw_href = link.get("href", "").strip()
         url = normalize_search_result_url(raw_href)
         if not url or url in seen:
+            continue
+
+        if not is_candidate_url_allowed(url, query):
             continue
 
         snippet_node = block.select_one(".result__snippet")
@@ -277,6 +308,7 @@ async def duckduckgo_search(client: httpx.AsyncClient, query: str) -> list[dict]
 async def bing_search(client: httpx.AsyncClient, query: str) -> list[dict]:
     response = await client.get("https://www.bing.com/search", params={"q": query, "setlang": "vi-VN"})
     response.raise_for_status()
+
     soup = BeautifulSoup(response.text, "html.parser")
 
     results: list[dict] = []
@@ -285,16 +317,23 @@ async def bing_search(client: httpx.AsyncClient, query: str) -> list[dict]:
         link = block.select_one("h2 a")
         if not link:
             continue
+
         url = (link.get("href") or "").strip()
         if not url or url in seen:
             continue
+
+        if not is_candidate_url_allowed(url, query):
+            continue
+
         title = clean_text(link.get_text(" ", strip=True)) or url
         snippet_node = block.select_one(".b_caption p")
         snippet = clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+
         seen.add(url)
         results.append({"title": title, "url": url, "snippet": snippet})
         if len(results) >= settings.WEB_SEARCH_RESULTS_LIMIT:
             break
+
     return results
 
 
@@ -312,12 +351,16 @@ async def fetch_page_context(
         logger.debug("Skip url %s: %s", url, exc)
         return None
 
+    final_url = str(response.url)
+    if not is_candidate_url_allowed(final_url, query):
+        return None
+
     soup = BeautifulSoup(response.text, "html.parser")
     for selector in ["script", "style", "noscript", "svg", "header", "footer", "nav", "form", "aside"]:
         for node in soup.select(selector):
             node.decompose()
 
-    title = title_hint or clean_text((soup.title.get_text(" ", strip=True) if soup.title else "")) or url
+    title = title_hint or clean_text((soup.title.get_text(" ", strip=True) if soup.title else "")) or final_url
 
     content_candidates: list[str] = []
     for selector in ["main", "article", "[role='main']", ".content", ".article", ".post-content", "body"]:
@@ -333,14 +376,18 @@ async def fetch_page_context(
 
     raw_content = max(content_candidates, key=len)
     content = extract_focus_content(raw_content, query, settings.WEB_SEARCH_MAX_CONTEXT_CHARS)
+    if looks_like_generic_page(final_url, title, raw_content):
+        return None
+
     page_date = extract_page_date(soup, response.headers, title, snippet_hint, raw_content)
-    snippet = clean_text(snippet_hint) or content[:260]
+    legal_status_excerpt = extract_legal_status_excerpt(raw_content)
+    snippet = legal_status_excerpt or clean_text(snippet_hint) or content[:260]
     fetched_at = now_app_time().strftime("%H:%M:%S %d/%m/%Y")
-    domain = get_domain(url)
+    domain = get_domain(final_url)
 
     result = WebResult(
         title=title,
-        url=url,
+        url=final_url,
         snippet=snippet,
         content=content,
         domain=domain,
@@ -399,6 +446,8 @@ def score_search_result(query: str, item: dict) -> float:
     url = str(item.get("url", ""))
     haystack = f"{title} {snippet} {url}".lower()
     domain = get_domain(url)
+    if not is_candidate_url_allowed(url, query):
+        return -999.0
 
     score = score_domain_reliability(domain, query, title) * 4.0
     for token in significant_tokens(query):
@@ -700,11 +749,63 @@ def get_domain(url: str) -> str:
     return (urlparse(url).netloc or "").replace("www.", "").lower()
 
 
+def is_allowed_legal_domain(domain: str) -> bool:
+    domain = (domain or "").lower().replace("www.", "")
+    return any(domain == allowed or domain.endswith(f".{allowed}") for allowed in PRIORITY_DOMAINS)
+
+
+def is_candidate_url_allowed(url: str, query: str) -> bool:
+    url_l = (url or "").lower()
+    if not url_l.startswith(("http://", "https://")):
+        return False
+    if any(pattern in url_l for pattern in BLOCKED_URL_PATTERNS):
+        return False
+    domain = get_domain(url_l)
+    if not domain:
+        return False
+    if _contains_any(normalize_query_text(query).lower(), LEGAL_OBJECT_KEYWORDS + LEGAL_FRESHNESS_KEYWORDS + DISPUTE_RECHECK_KEYWORDS):
+        return is_allowed_legal_domain(domain)
+    return True
+
+
+
+
+def extract_legal_status_excerpt(text: str) -> str:
+    lines = [clean_text(line) for line in (text or '').splitlines() if clean_text(line)]
+    matches: list[str] = []
+    for line in lines:
+        lower = line.lower()
+        if any(token in lower for token in ['hiệu lực', 'tình trạng', 'ngày có hiệu lực', 'còn hiệu lực', 'hết hiệu lực', 'bị thay thế', 'sửa đổi, bổ sung', 'sửa đổi bổ sung']):
+            matches.append(line)
+        if len(matches) >= 2:
+            break
+    return ' | '.join(matches)[:320]
+
+
+def looks_like_generic_page(url: str, title: str, content: str) -> bool:
+    haystack = clean_text(f"{title} {content}").lower()
+    url_l = (url or "").lower()
+    parsed = urlparse(url_l)
+    if any(pattern in url_l for pattern in BLOCKED_URL_PATTERNS):
+        return True
+    if any(pattern in haystack for pattern in BLOCKED_PAGE_PATTERNS):
+        return True
+    if parsed.path in {"", "/", "/home", "/trang-chu"}:
+        return True
+    if get_domain(url_l) == "dichvucong.gov.vn" and ("dịch vụ công quốc gia" in haystack and len(content) < 500):
+        return True
+    return False
+
+
 def priority_domains_for_query(query: str) -> list[str]:
     query_l = normalize_query_text(query).lower()
     if not _contains_any(query_l, LEGAL_OBJECT_KEYWORDS + LEGAL_FRESHNESS_KEYWORDS + DISPUTE_RECHECK_KEYWORDS):
         return []
-    return PRIORITY_DOMAINS.copy()
+    domains = PRIORITY_DOMAINS.copy()
+    if any(token in query_l for token in ["bảo hiểm", "bhyt", "bhxh"]):
+        preferred = ["baohiemxahoi.gov.vn", "vbpl.vn", "luatvietnam.vn", "thuvienphapluat.vn", "chinhphu.vn", "dichvucong.gov.vn"]
+        domains = preferred + [d for d in domains if d not in preferred]
+    return domains
 
 
 def score_domain_reliability(domain: str, query: str, title: str = "") -> float:

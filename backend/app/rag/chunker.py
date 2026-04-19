@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 from app.config import settings
+from app.rag.legal_metadata import extract_chunk_legal_metadata
+
+_PAGE_MARKER_RE = re.compile(r"\[\[PAGE:(\d+)\]\]")
 
 
 @dataclass
@@ -51,10 +54,30 @@ class RecursiveCharacterChunker:
         text = self._clean(text)
         raw = list(self._split_recursive(text, self.separators))
         merged = self._merge_with_overlap(raw)
-        return [
-            Chunk(content=c, position=i, meta={"char_start": self._find_offset(text, c, i)})
-            for i, c in enumerate(merged)
-        ]
+
+        chunks: list[Chunk] = []
+        for i, raw_chunk in enumerate(merged):
+            page_numbers = [int(value) for value in _PAGE_MARKER_RE.findall(raw_chunk)]
+            cleaned_chunk = _PAGE_MARKER_RE.sub('', raw_chunk)
+            cleaned_chunk = re.sub(r"\n{3,}", "\n\n", cleaned_chunk).strip()
+            if not cleaned_chunk:
+                continue
+
+            meta = {"char_start": self._find_offset(text, raw_chunk, i)}
+            if page_numbers:
+                unique_pages = sorted(set(page_numbers))
+                meta["page_numbers"] = unique_pages
+                meta["page_start"] = unique_pages[0]
+                meta["page_end"] = unique_pages[-1]
+                meta["location_label"] = (
+                    f"trang {unique_pages[0]}"
+                    if len(unique_pages) == 1
+                    else f"trang {unique_pages[0]}-{unique_pages[-1]}"
+                )
+            meta.update(extract_chunk_legal_metadata(cleaned_chunk))
+
+            chunks.append(Chunk(content=cleaned_chunk, position=i, meta=meta))
+        return chunks
 
     # ── Private ───────────────────────────────────────────────────────────────
 

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.router import AnswerMode, RouteDecision, agent_router
 from app.chat.engine import chat_engine
+from app.chat.evaluator import is_greeting_query
 from app.config import settings
 from app.models.db import Conversation, Message, MessageFeedback, get_db, now_utc
 
@@ -31,28 +32,6 @@ class ChatRequest(BaseModel):
     dataset_id: Optional[str] = None
     mode: Optional[str] = None
     session_key: Optional[str] = None
-
-
-class ConversationOut(BaseModel):
-    id: str
-    title: str
-    created_at: str
-
-    class Config:
-        from_attributes = True
-
-
-class MessageOut(BaseModel):
-    id: str
-    role: str
-    content: str
-    answer_mode: Optional[str]
-    citations: list
-    created_at: str
-    feedback: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 class FeedbackRequest(BaseModel):
@@ -81,6 +60,15 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         dataset_id=req.dataset_id,
         force_mode=force_mode,
     )
+    force_web = force_web or bool(decision.assessment.get("should_force_web"))
+    if (
+        not force_web
+        and not is_greeting_query(req.query)
+        and requested_mode != AnswerMode.RAG
+        and decision.mode == AnswerMode.AI
+        and not bool(decision.assessment.get("should_use_rag"))
+    ):
+        force_web = True
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -109,7 +97,6 @@ async def chat_stream_image(
 
     if not image.filename:
         raise HTTPException(400, "Bạn chưa chọn hình ảnh")
-
     if not (image.content_type or "").startswith("image/"):
         raise HTTPException(400, "Chỉ hỗ trợ tệp hình ảnh")
 
@@ -130,7 +117,7 @@ async def chat_stream_image(
     history = await _load_history(db, conversation.id, exclude_message_id=user_msg.id)
     effective_query = _resolve_effective_query(clean_query, history)
 
-    decision = RouteDecision(AnswerMode.AI, [], reason="image_upload")
+    decision = RouteDecision(AnswerMode.AI, [], reason="image_upload", assessment={"reason": "image_upload"})
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -148,10 +135,7 @@ async def chat_stream_image(
 
 
 @router.get("/conversations")
-async def list_conversations(
-    session_key: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-):
+async def list_conversations(session_key: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     stmt = select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)
     if session_key:
         stmt = stmt.where(Conversation.session_key == session_key)
@@ -170,11 +154,7 @@ async def list_conversations(
 
 @router.get("/conversations/{conversation_id}/messages")
 async def get_messages(conversation_id: str, db: AsyncSession = Depends(get_db)):
-    stmt = (
-        select(Message)
-        .where(Message.conversation_id == UUID(conversation_id))
-        .order_by(Message.created_at)
-    )
+    stmt = select(Message).where(Message.conversation_id == UUID(conversation_id)).order_by(Message.created_at)
     result = await db.execute(stmt)
     msgs = result.scalars().all()
 
@@ -205,7 +185,7 @@ async def get_messages(conversation_id: str, db: AsyncSession = Depends(get_db))
 
 @router.post("/messages/{message_id}/feedback")
 async def submit_feedback(message_id: str, payload: FeedbackRequest, db: AsyncSession = Depends(get_db)):
-    rating = (payload.rating or '').strip().lower()
+    rating = (payload.rating or "").strip().lower()
     if rating not in {"like", "dislike"}:
         raise HTTPException(400, "rating phải là like hoặc dislike")
 
@@ -229,7 +209,6 @@ async def submit_feedback(message_id: str, payload: FeedbackRequest, db: AsyncSe
         await db.commit()
         return {"message": "Đã hủy đánh giá trước đó.", "feedback": None}
 
-    # Mỗi câu trả lời chỉ giữ đúng 1 bản ghi đánh giá hiện hành.
     await db.execute(delete(MessageFeedback).where(MessageFeedback.message_id == msg.id))
 
     feedback = MessageFeedback(
@@ -253,7 +232,6 @@ async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(g
     if not conv:
         raise HTTPException(404, "Conversation không tồn tại")
 
-    # Ẩn hội thoại khỏi người dùng hiện tại nhưng vẫn giữ nguyên log/giám sát cho admin.
     marker = f"deleted::{conv.session_key or 'anon'}::{uuid4().hex}"
     conv.session_key = marker
     conv.updated_at = now_utc()
@@ -261,11 +239,7 @@ async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(g
     return {"message": "Đã xoá"}
 
 
-async def _get_or_create_conversation(
-    db: AsyncSession,
-    conversation_id: Optional[str],
-    session_key: Optional[str],
-) -> Conversation:
+async def _get_or_create_conversation(db: AsyncSession, conversation_id: Optional[str], session_key: Optional[str]) -> Conversation:
     if conversation_id:
         stmt = select(Conversation).where(Conversation.id == UUID(conversation_id))
         conv = (await db.execute(stmt)).scalar_one_or_none()
@@ -333,10 +307,8 @@ _LEGAL_FRESHNESS_HINTS = [
 
 _LEGAL_OBJECT_HINTS = [
     "luật", "bộ luật", "nghị định", "thông tư", "quyết định", "quy định",
-    "điều", "khoản", "điểm",
-    "xử phạt", "mức phạt", "lệ phí",
-    "thủ tục", "hành chính", "căn cứ pháp lý",
-    "cư trú", "tạm trú", "thường trú", "cccd", "căn cước", "hộ tịch", "thuế",
+    "điều", "khoản", "điểm", "xử phạt", "mức phạt", "lệ phí", "thủ tục", "hành chính",
+    "căn cứ pháp lý", "cư trú", "tạm trú", "thường trú", "cccd", "căn cước", "hộ tịch", "thuế",
 ]
 
 
@@ -386,11 +358,7 @@ async def _should_auto_force_web(db: AsyncSession, conversation_id: UUID, query:
 
 
 async def _save_user_message(db: AsyncSession, conversation: Conversation, content: str) -> Message:
-    user_msg = Message(
-        conversation_id=conversation.id,
-        role="user",
-        content=content,
-    )
+    user_msg = Message(conversation_id=conversation.id, role="user", content=content)
     if not conversation.title or conversation.title == "Hội thoại mới":
         conversation.title = _build_conversation_title(content)
     conversation.updated_at = now_utc()
@@ -400,11 +368,7 @@ async def _save_user_message(db: AsyncSession, conversation: Conversation, conte
 
 
 async def _load_history(db: AsyncSession, conversation_id: UUID, exclude_message_id: Optional[UUID] = None) -> list[Message]:
-    stmt = (
-        select(Message)
-        .where(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at)
-    )
+    stmt = select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at)
     if exclude_message_id:
         stmt = stmt.where(Message.id != exclude_message_id)
     history_result = await db.execute(stmt)

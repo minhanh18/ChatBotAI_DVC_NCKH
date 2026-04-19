@@ -11,8 +11,8 @@
   const FAB_KEY = 'chatFabPos_v30';
   const FAB_SIZE = 56;
   const VIEW_MARGIN = 14;
-  const PANEL_GAP = 12;
-  const PANEL_MIN_TOP = 10;
+  const PANEL_GAP = 10;
+  const PANEL_MIN_TOP = 12;
   let hasLoadedEmbed = false;
   let isDragging = false;
   let dragStarted = false;
@@ -115,7 +115,7 @@
     if (panelTop < PANEL_MIN_TOP) {
       panelTop = clamp(fabRect.bottom + PANEL_GAP, PANEL_MIN_TOP, window.innerHeight - panelRect.height - VIEW_MARGIN);
     }
-    panelTop = clamp(panelTop + 12, PANEL_MIN_TOP, window.innerHeight - panelRect.height - VIEW_MARGIN);
+    panelTop = clamp(panelTop, PANEL_MIN_TOP, window.innerHeight - panelRect.height - VIEW_MARGIN);
 
     chatPanel.style.left = `${Math.round(panelLeft)}px`;
     chatPanel.style.top = `${Math.round(panelTop)}px`;

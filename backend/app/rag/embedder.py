@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any
 
 import google.generativeai as genai
@@ -18,9 +19,16 @@ logger = logging.getLogger(__name__)
 
 genai.configure(api_key=settings.GEMINI_API_KEY)
 
-_BATCH_SIZE = 20
-_RETRY_MAX = 3
-_RETRY_DELAY = 2.0
+_BATCH_SIZE = 5
+_RETRY_MAX = 6
+_RETRY_DELAY = 3.0
+
+
+
+
+def _is_rate_limited_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in ("429", "resource_exhausted", "quota", "too many requests", "rate limit"))
 
 
 class EmbeddingService:
@@ -51,7 +59,9 @@ class EmbeddingService:
             except Exception as exc:
                 last_error = exc
                 if attempt < _RETRY_MAX - 1:
-                    wait = _RETRY_DELAY * (2 ** attempt)
+                    wait = (_RETRY_DELAY * (2 ** attempt)) + random.uniform(0.0, 1.0)
+                    if _is_rate_limited_error(exc):
+                        wait = max(wait, 8.0 + (attempt * 6.0))
                     logger.warning(
                         "Embedding batch thất bại (lần %d/%d): %s. Retry sau %.1fs",
                         attempt + 1,
@@ -118,7 +128,11 @@ class EmbeddingService:
             raise RuntimeError("Phản hồi embedding không hợp lệ")
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            return list(await asyncio.gather(*[_request_one(client, text) for text in texts]))
+            outputs: list[list[float]] = []
+            for text in texts:
+                outputs.append(await _request_one(client, text))
+                await asyncio.sleep(0.35)
+            return outputs
 
     @staticmethod
     def _should_fallback(exc: Exception) -> bool:

@@ -27,7 +27,7 @@ celery_app.conf.update(
 )
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=10)
+@celery_app.task(bind=True, max_retries=8, default_retry_delay=15)
 def ingest_document_task(self, document_id: str):
     """Task index tài liệu — chạy trong Celery worker."""
     try:
@@ -35,5 +35,6 @@ def ingest_document_task(self, document_id: str):
         asyncio.run(ingest_document(document_id))
         logger.info("Task ingest xong: %s", document_id)
     except Exception as exc:
-        logger.error("Task ingest thất bại: %s — %s", document_id, exc)
-        raise self.retry(exc=exc)
+        countdown = min(300, 15 * (2 ** self.request.retries))
+        logger.warning("Task ingest sẽ retry: %s — %s (sau %ss)", document_id, exc, countdown)
+        raise self.retry(exc=exc, countdown=countdown)

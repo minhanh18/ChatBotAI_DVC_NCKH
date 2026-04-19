@@ -49,7 +49,7 @@ export function AdminApp() {
       <div className="flex-1 overflow-hidden">
         <Routes>
           <Route path="/" element={<Navigate to="/admin/chat" replace />} />
-          <Route path="/chat" element={<ChatWindow />} />
+          <Route path="/chat" element={<ChatWindow adminMode sessionScope="admin" />} />
           <Route path="/documents" element={<DocumentsPanel />} />
           <Route path="/monitor" element={<AdminDashboard />} />
         </Routes>

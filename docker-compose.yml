@@ -99,7 +99,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    command: celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=2 -Q celery
+    command: celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=1 -Q celery
     environment:
       <<: *backend-env
     volumes:

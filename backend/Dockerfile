@@ -12,7 +12,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
-# cache-bust: force rebuild v3.8.1
+COPY worker_start.sh ./worker_start.sh
+RUN chmod +x ./worker_start.sh
+# cache-bust: force rebuild v3.8.2
 
 RUN mkdir -p /app/uploads
 

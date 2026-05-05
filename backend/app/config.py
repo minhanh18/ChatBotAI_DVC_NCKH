@@ -5,10 +5,31 @@
 """
 
 import json
-from typing import Any
+from typing import Any, Tuple, Type
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, EnvSettingsSource, PydanticBaseSettingsSource
+
+
+class SafeEnvSettingsSource(EnvSettingsSource):
+    """Tránh crash khi field list[str] nhận chuỗi rỗng hoặc comma-separated từ Render.
+    pydantic-settings v2 gọi json.loads() trước field_validator nên cần xử lý tại đây:
+    - Chuỗi rỗng  → trả None để pydantic dùng default
+    - JSON hợp lệ → parse bình thường
+    - comma-separated (key1,key2) → split thành list
+    """
+    def decode_complex_value(self, field_name: str, field_info: Any, value: Any) -> Any:
+        if not isinstance(value, str):
+            return super().decode_complex_value(field_name, field_info, value)
+        v = value.strip()
+        if not v:
+            return None  # dùng default của field
+        try:
+            return json.loads(v)  # JSON hợp lệ: [...] hoặc {...}
+        except (json.JSONDecodeError, ValueError):
+            # Fallback: comma-separated  key1,key2,key3
+            parts = [item.strip() for item in v.split(",") if item.strip()]
+            return parts if parts else None
 
 
 class Settings(BaseSettings):
@@ -113,7 +134,7 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = "admin123"
 
     # ── CORS ───────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = ["http://localhost", "http://localhost:80", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost", "http://localhost:80", "http://localhost:3000", "https://chatbot-frontend-oymx.onrender.com"]
 
     # ── Validators: pydantic-settings v2 đọc list từ .env dưới dạng JSON string ──
     @field_validator(
@@ -133,6 +154,19 @@ class Settings(BaseSettings):
                 # Thử parse comma-separated
                 return [item.strip() for item in v.split(",") if item.strip()]
         return v
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        # Dùng SafeEnvSettingsSource thay vì EnvSettingsSource mặc định
+        # để tránh crash khi list field được set thành chuỗi rỗng
+        return (init_settings, SafeEnvSettingsSource(settings_cls), dotenv_settings, file_secret_settings)
 
     class Config:
         env_file = ".env"

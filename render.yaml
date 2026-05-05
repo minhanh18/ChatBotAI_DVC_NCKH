@@ -5,7 +5,6 @@ services:
     plan: free
     ipAllowList: []
 
-  # ── Backend (Web Service — thay pserv vì Free plan không hỗ trợ pserv) ────
   - type: web
     name: chatbot-backend
     runtime: docker

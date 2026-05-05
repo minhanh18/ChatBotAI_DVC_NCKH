@@ -24,9 +24,10 @@ ENV BACKEND_PORT=8000
 
 EXPOSE 80
 
-# Chờ backend DNS sẵn sàng trước khi start nginx
-# Render: fromService trả về internal hostname (vd: chatbot-backend-xxxx)
-# nginx sẽ crash nếu resolve DNS thất bại ngay lúc khởi động
+# envsubst điền BACKEND_HOST/PORT vào nginx config rồi start nginx
+# Không cần chờ DNS — nginx resolve per-request nhờ resolver trong template
 CMD ["/bin/sh", "-c", \
-  "envsubst '$$BACKEND_HOST $$BACKEND_PORT' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && \
-  nginx -g 'daemon off;'"]
+  "envsubst '$$BACKEND_HOST $$BACKEND_PORT' \
+   < /etc/nginx/templates/default.conf.template \
+   > /etc/nginx/conf.d/default.conf \
+   && nginx -g 'daemon off;'"]

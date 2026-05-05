@@ -29,14 +29,24 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
+      # ── API Keys (PHẢI nhập thủ công trên Render Dashboard) ──
       - key: GEMINI_API_KEY
-        sync: false
+        sync: false          # Bắt buộc — Google AI Studio
+      - key: GEMINI_API_KEYS
+        sync: false          # Tuỳ chọn — nhiều key cách nhau bằng dấu phẩy
+      - key: TAVILY_API_KEY
+        sync: false          # Bắt buộc nếu bật web search
+      # ── Bảo mật ──────────────────────────────────────────────
       - key: SECRET_KEY
-        generateValue: true
+        generateValue: true  # Render tự sinh
+      - key: SESSION_HMAC_KEY
+        generateValue: true  # Render tự sinh — mã hoá session_key trong DB
+      # ── Admin ────────────────────────────────────────────────
       - key: ADMIN_USERNAME
         value: admin
       - key: ADMIN_PASSWORD
-        sync: false
+        sync: false          # Nhập thủ công — đặt mật khẩu mạnh
+      # ── Database & Cache ─────────────────────────────────────
       - key: DATABASE_URL_RAW
         fromDatabase:
           name: chatbot-db
@@ -46,22 +56,25 @@ services:
           name: chatbot-redis
           type: keyvalue
           property: connectionString
+      # ── App config ───────────────────────────────────────────
       - key: PORT
-        value: 8000
+        value: "8000"
       - key: UVICORN_WORKERS
-        value: 2
+        value: "2"
       - key: DEBUG
-        value: false
+        value: "false"
       - key: ENABLE_WEB_SEARCH
-        value: true
+        value: "true"
+      - key: GEMINI_MAX_OUTPUT_TOKENS
+        value: "8192"
       - key: CHUNK_SIZE
-        value: 800
+        value: "800"
       - key: CHUNK_OVERLAP
-        value: 120
+        value: "120"
       - key: RETRIEVAL_TOP_K
-        value: 5
+        value: "5"
       - key: RETRIEVAL_SCORE_THRESHOLD
-        value: 0.30
+        value: "0.30"
       - key: CORS_ORIGINS
         value: '["https://chatbot-frontend.onrender.com"]'
 
@@ -75,6 +88,14 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_API_KEYS
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: SESSION_HMAC_KEY
+        sync: false
       - key: DATABASE_URL_RAW
         fromDatabase:
           name: chatbot-db
@@ -85,17 +106,19 @@ services:
           type: keyvalue
           property: connectionString
       - key: DEBUG
-        value: false
+        value: "false"
       - key: ENABLE_WEB_SEARCH
-        value: true
+        value: "true"
+      - key: GEMINI_MAX_OUTPUT_TOKENS
+        value: "8192"
       - key: CHUNK_SIZE
-        value: 800
+        value: "800"
       - key: CHUNK_OVERLAP
-        value: 120
+        value: "120"
       - key: RETRIEVAL_TOP_K
-        value: 5
+        value: "5"
       - key: RETRIEVAL_SCORE_THRESHOLD
-        value: 0.30
+        value: "0.30"
 
 databases:
   - name: chatbot-db

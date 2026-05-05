@@ -1,11 +1,11 @@
 """
-Agent Router — ưu tiên RAG trước, rồi mới fallback.
+Agent Router — RAG-first bắt buộc.
 
-Logic mới:
-  1. Nếu có tài liệu đã index thì luôn retrieve trước.
-  2. Chấm độ mạnh của bằng chứng retrieve.
-  3. Nếu chunk đủ mạnh → RAG.
-  4. Nếu chunk yếu/không có → AI, nhưng vẫn mang theo support chunks để kiểm chứng mềm.
+Nguyên tắc:
+  1. Với mọi câu hỏi không phải lời chào, nếu hệ thống có tài liệu đã index thì luôn truy xuất RAG trước.
+  2. Nếu retriever tìm được chunk, engine sẽ sinh câu trả lời bằng RAG trước.
+  3. Nếu RAG không trả lời được / không đủ căn cứ, engine mới fallback sang web search.
+  4. Không ép thẳng sang AI/search chỉ vì câu hỏi có vẻ cần cập nhật; việc search là tầng fallback sau RAG.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from typing import Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chat.evaluator import assess_retrieval, is_greeting_query
-from app.config import settings
 from app.rag.retriever import RetrievedChunk, retriever
 
 logger = logging.getLogger(__name__)
@@ -50,41 +49,76 @@ class AgentRouter:
         dataset_id: Optional[str] = None,
         force_mode: Optional[AnswerMode] = None,
     ) -> RouteDecision:
-        if is_greeting_query(query):
-            return RouteDecision(AnswerMode.AI, [], reason="greeting", assessment={"reason": "greeting", "confidence": "high"})
+        """Định tuyến phản hồi theo chính sách RAG-first.
 
-        has_docs = await self._has_indexed_documents(db)
+        `force_mode=AI` không được dùng để bỏ qua RAG đối với câu hỏi thường,
+        vì yêu cầu của hệ thống là luôn kiểm tra nguồn nội bộ trước. Ngoại lệ:
+        endpoint ảnh đã tạo decision AI riêng, không đi qua router này.
+        """
+        if is_greeting_query(query):
+            return RouteDecision(
+                AnswerMode.AI,
+                [],
+                reason="greeting",
+                assessment={"reason": "greeting", "confidence": "high", "rag_first_checked": False},
+            )
+
+        has_docs = await self._has_indexed_documents(db, dataset_id=dataset_id)
         chunks: list[RetrievedChunk] = []
 
         if has_docs:
+            # Luôn retrieve trước, kể cả khi UI/backend có gợi ý mode AI.
             chunks = await retriever.retrieve(query, db, dataset_id)
 
-        assessment = assess_retrieval(query, chunks, mode_hint=force_mode or "auto")
-        logger.debug("Route assessment: %s", assessment.to_dict())
-
-        if force_mode == AnswerMode.RAG:
-            if assessment.should_use_rag:
-                return RouteDecision(AnswerMode.RAG, chunks, reason="forced_rag", assessment=assessment.to_dict())
-            return RouteDecision(AnswerMode.AI, chunks, reason="forced_rag_but_weak_grounding", assessment=assessment.to_dict())
-
-        if force_mode == AnswerMode.AI:
-            return RouteDecision(AnswerMode.AI, chunks, reason="forced_ai", assessment=assessment.to_dict())
+        assessment_obj = assess_retrieval(query, chunks, mode_hint=force_mode or "auto")
+        assessment = assessment_obj.to_dict()
+        assessment["rag_first_checked"] = bool(has_docs)
+        assessment["force_mode_requested"] = getattr(force_mode, "value", force_mode)
+        logger.info("Route assessment: %s", assessment)
 
         if not has_docs:
-            return RouteDecision(AnswerMode.AI, [], reason="no_documents", assessment=assessment.to_dict())
+            return RouteDecision(
+                AnswerMode.AI,
+                [],
+                reason="no_indexed_documents_after_rag_check",
+                assessment=assessment,
+            )
 
-        if assessment.should_use_rag:
-            return RouteDecision(AnswerMode.RAG, chunks, reason="rag_first_grounded", assessment=assessment.to_dict())
+        if chunks:
+            # Quan trọng: mọi chunk được retriever trả về đều phải được thử RAG trước.
+            # Nếu model không trả lời được từ context, engine sẽ fallback web.
+            assessment["should_use_rag"] = True
+            assessment["should_force_web"] = False
+            assessment["should_refuse_precise"] = False
+            return RouteDecision(
+                AnswerMode.RAG,
+                chunks,
+                reason="rag_first_always_try",
+                assessment=assessment,
+            )
 
-        return RouteDecision(AnswerMode.AI, chunks, reason=assessment.reason or "fallback_ai", assessment=assessment.to_dict())
+        # Có tài liệu nhưng không truy xuất được chunk nào: đã kiểm tra RAG, mới cho search/AI.
+        assessment["should_use_rag"] = False
+        assessment["should_force_web"] = True
+        return RouteDecision(
+            AnswerMode.AI,
+            [],
+            reason="rag_checked_no_chunks_then_web",
+            assessment=assessment,
+        )
 
-    async def _has_indexed_documents(self, db: AsyncSession) -> bool:
+    async def _has_indexed_documents(self, db: AsyncSession, dataset_id: Optional[str] = None) -> bool:
         from sqlalchemy import func, select
+        from uuid import UUID
         from app.models.db import Document
 
-        result = await db.execute(
-            select(func.count()).select_from(Document).where(Document.status == "ready")
-        )
+        stmt = select(func.count()).select_from(Document).where(Document.status == "ready")
+        if dataset_id:
+            try:
+                stmt = stmt.where(Document.dataset_id == UUID(dataset_id))
+            except Exception:
+                return False
+        result = await db.execute(stmt)
         return (result.scalar() or 0) > 0
 
 

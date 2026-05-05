@@ -1,4 +1,5 @@
-(function () {
+(
+  function () {
   const chatFab = document.getElementById('chatFab');
   const chatPanel = document.getElementById('chatPanel');
   const chatClose = document.getElementById('chatClose');
@@ -8,11 +9,12 @@
 
   if (!chatFab || !chatPanel || !chatClose || !chatFullscreen || !chatFrame) return;
 
-  const FAB_KEY = 'chatFabPos_v30';
+  const FAB_KEY = 'chatFabPos_v31';
   const FAB_SIZE = 56;
   const VIEW_MARGIN = 14;
   const PANEL_GAP = 10;
-  const PANEL_MIN_TOP = 12;
+  const DESKTOP_HEADER_CLEARANCE = 104;
+  const MOBILE_HEADER_CLEARANCE = 74;
   let hasLoadedEmbed = false;
   let isDragging = false;
   let dragStarted = false;
@@ -103,19 +105,41 @@
     return rect;
   }
 
+  function getHeaderClearance() {
+    return window.innerWidth <= 767 ? MOBILE_HEADER_CLEARANCE : DESKTOP_HEADER_CLEARANCE;
+  }
+
+  function syncResponsivePanelSize() {
+    if (chatPanel.classList.contains('fullscreen')) return;
+    const headerClearance = getHeaderClearance();
+    const viewportW = Math.max(320, window.innerWidth);
+    const viewportH = Math.max(320, window.innerHeight);
+    const panelWidth = Math.min(456, viewportW - VIEW_MARGIN * 2);
+    const panelHeight = Math.min(700, viewportH - headerClearance - VIEW_MARGIN);
+    chatPanel.style.width = `${Math.max(300, Math.round(panelWidth))}px`;
+    chatPanel.style.height = `${Math.max(360, Math.round(panelHeight))}px`;
+    chatPanel.style.maxHeight = `${Math.max(360, Math.round(panelHeight))}px`;
+  }
+
   function syncPanelToFab() {
     if (chatPanel.classList.contains('fullscreen')) return;
+    syncResponsivePanelSize();
+
     const fabRect = chatFab.getBoundingClientRect();
     const panelRect = measurePanel();
+    const headerClearance = getHeaderClearance();
 
-    let panelLeft = fabRect.left + fabRect.width - panelRect.width;
+    // Panel luôn giữ mép phải theo FAB và mở về bên trái.
+    let panelLeft = fabRect.right - panelRect.width;
     panelLeft = clamp(panelLeft, VIEW_MARGIN, window.innerWidth - panelRect.width - VIEW_MARGIN);
 
+    // Ưu tiên mở lên trên FAB; nếu bị header che thì kéo xuống dưới ngưỡng an toàn.
     let panelTop = fabRect.top - panelRect.height - PANEL_GAP;
-    if (panelTop < PANEL_MIN_TOP) {
-      panelTop = clamp(fabRect.bottom + PANEL_GAP, PANEL_MIN_TOP, window.innerHeight - panelRect.height - VIEW_MARGIN);
+    if (panelTop < headerClearance) {
+      panelTop = headerClearance;
     }
-    panelTop = clamp(panelTop, PANEL_MIN_TOP, window.innerHeight - panelRect.height - VIEW_MARGIN);
+    const maxTop = Math.max(headerClearance, window.innerHeight - panelRect.height - VIEW_MARGIN);
+    panelTop = clamp(panelTop, headerClearance, maxTop);
 
     chatPanel.style.left = `${Math.round(panelLeft)}px`;
     chatPanel.style.top = `${Math.round(panelTop)}px`;
@@ -141,6 +165,9 @@
       chatPanel.style.top = '0';
       chatPanel.style.right = '0';
       chatPanel.style.bottom = '0';
+      chatPanel.style.width = 'auto';
+      chatPanel.style.height = 'auto';
+      chatPanel.style.maxHeight = 'none';
     } else {
       chatPanel.classList.remove('fullscreen');
       document.body.classList.remove('chat-fullscreen-lock');

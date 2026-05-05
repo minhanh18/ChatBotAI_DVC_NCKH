@@ -67,6 +67,54 @@ def is_procedure_query(query: str) -> bool:
     return any(re.search(pattern, q) for pattern in PROCEDURE_PATTERNS)
 
 
+def is_out_of_domain(query: str) -> bool:
+    """
+    Phát hiện câu hỏi rõ ràng ngoài phạm vi hành chính/pháp lý/dịch vụ công.
+    Trả về True nếu câu hỏi thuộc lĩnh vực như giáo dục phổ thông, giải trí,
+    khoa học tự nhiên, thể thao, v.v. mà không liên quan đến thủ tục hành chính.
+    """
+    q = (query or "").lower()
+    # Các chủ đề rõ ràng ngoài phạm vi
+    _OUT_OF_DOMAIN_SIGNALS = [
+        # Giáo dục phổ thông / học thuật
+        r"chương trình.*(dạy|học|đào tạo|môn|lớp|năm học|tiết|bài|giáo án|giáo trình)",
+        r"môn (ngữ văn|toán|vật lý|hóa học|sinh học|địa lý|lịch sử|tin học|thể dục|âm nhạc|mỹ thuật|tiếng anh)",
+        r"lớp (1|2|3|4|5|6|7|8|9|10|11|12)\b",
+        r"(phương trình|tích phân|đạo hàm|hình học|đại số|số học|xác suất)",
+        r"(protein|adn|arn|tế bào|quang hợp|tiến hóa|phản ứng hóa học|nguyên tố)",
+        # Giải trí / văn hóa
+        r"(phim|bộ phim|diễn viên|ca sĩ|bài hát|âm nhạc|nhạc|album|mv|concert)",
+        r"(game|trò chơi|esport|liên quân|lol|pubg|minecraft)",
+        r"(bóng đá|bóng rổ|cầu lông|tennis|thể thao|giải đấu|vô địch|cầu thủ)",
+        # Nấu ăn / sức khoẻ / làm đẹp không liên quan hành chính
+        r"(công thức nấu|món ăn|nấu ăn|ẩm thực|bữa ăn|dinh dưỡng)\b(?!.*phí)",
+        r"(giảm cân|tập gym|yoga|skincare|làm đẹp|mỹ phẩm)\b",
+        # Công nghệ / lập trình không liên quan dịch vụ công
+        r"(lập trình|python|javascript|code|coding|framework|database|server|api)\b(?!.*hành chính|.*dịch vụ|.*thuế)",
+        # Thiên văn / địa lý tự nhiên
+        r"(hành tinh|vũ trụ|ngôi sao|thiên hà|trái đất|núi lửa|động đất)\b",
+    ]
+    # Nếu khớp out-of-domain nhưng cũng chứa từ hành chính thì KHÔNG coi là out-of-domain
+    _ADMIN_OVERRIDE = [
+        "thủ tục", "hành chính", "dịch vụ công", "đăng ký", "cấp giấy",
+        "thuế", "bảo hiểm", "giấy phép", "nghị định", "thông tư", "luật",
+        "ubnd", "cơ quan", "nộp hồ sơ", "một cửa", "chứng thực", "công chứng",
+    ]
+    has_admin = any(kw in q for kw in _ADMIN_OVERRIDE)
+    if has_admin:
+        return False
+    return any(re.search(pat, q) for pat in _OUT_OF_DOMAIN_SIGNALS)
+
+
+def out_of_domain_reply() -> str:
+    return (
+        "Mình là trợ lý chuyên về thủ tục hành chính, pháp luật và dịch vụ công — "
+        "nên câu hỏi này nằm ngoài lĩnh vực mình hỗ trợ.\n\n"
+        "Bạn có câu hỏi nào về thủ tục hành chính, đăng ký giấy tờ, thuế, bảo hiểm "
+        "hoặc các dịch vụ công khác không? Mình sẵn sàng giúp!"
+    )
+
+
 def needs_freshness_check(query: str) -> bool:
     q = " ".join((query or "").split()).lower()
     return any(token in q for token in FRESHNESS_PATTERNS)
@@ -163,7 +211,10 @@ def assess_retrieval(
         or (best >= 0.40 and len(chunks) >= 2)
     )
 
-    should_use_rag = strong or ((legal or procedure) and medium and best >= 0.50 and len(chunks) >= 2)
+    # RAG-first: với câu hỏi pháp lý/thủ tục, nếu đã có chunk liên quan ở mức dùng được
+    # thì để RAG trả lời trước; chỉ fallback web khi RAG thật sự không trả lời được.
+    weak_but_usable = bool(chunks) and max_overlap >= 1 and best >= 0.38
+    should_use_rag = strong or ((legal or procedure) and (medium or weak_but_usable))
     should_force_web = ((legal or procedure) and not should_use_rag) or (freshness and not should_use_rag)
     should_refuse_precise = (legal or procedure) and not should_use_rag and not (force_web or should_force_web)
 

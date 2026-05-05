@@ -48,6 +48,7 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
   const [activeDataset, setActiveDataset] = useState<Dataset | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadKey, setUploadKey] = useState(0);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
@@ -57,6 +58,9 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
   const [busyDocId, setBusyDocId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
+
+  const pollStartRef = useRef<number>(0);
+  const POLL_MAX_MS = 120_000; // dừng tối đa 2 phút
 
   useEffect(() => {
     loadDatasets();
@@ -69,9 +73,18 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
 
   useEffect(() => {
     clearInterval(pollRef.current);
-    const indexing = documents.some((d) => d.status === 'pending' || d.status === 'indexing');
-    if (indexing && activeDataset) {
-      pollRef.current = setInterval(() => loadDocumentsFor(activeDataset.id), 3000);
+    const needsPoll = documents.some((d) => d.status === 'pending' || d.status === 'indexing');
+    if (needsPoll && activeDataset) {
+      pollStartRef.current = Date.now();
+      pollRef.current = setInterval(() => {
+        const elapsed = Date.now() - pollStartRef.current;
+        if (elapsed > POLL_MAX_MS) {
+          clearInterval(pollRef.current);
+          logger.debug?.('Polling dừng do vượt quá 2 phút');
+          return;
+        }
+        loadDocumentsFor(activeDataset.id);
+      }, 3000);
     }
     return () => clearInterval(pollRef.current);
   }, [documents, activeDataset]);
@@ -137,7 +150,7 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
       setError(normalizeUploadError(err));
     } finally {
       setUploading(false);
-      if (fileRef.current) fileRef.current.value = '';
+      setUploadKey((k) => k + 1);   // force-remount input so same file can be re-selected
     }
   };
 
@@ -269,6 +282,7 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
                   <RefreshCw size={14} /> Làm mới
                 </button>
                 <input
+                  key={uploadKey}
                   ref={fileRef}
                   type="file"
                   className="hidden"
@@ -400,13 +414,28 @@ function DocumentCard({
           {statusIcon}
           {statusText}
         </div>
-        <button disabled={busy} onClick={() => onRename(doc)} className="p-2 rounded-xl text-[#9a7868] hover:text-[#734232] hover:bg-[#fff7f2] disabled:opacity-50" title="Đổi tên tài liệu">
+        <button
+          disabled={busy}
+          onClick={(e) => { e.stopPropagation(); onRename(doc); }}
+          className="p-2 rounded-xl text-[#9a7868] hover:text-[#734232] hover:bg-[#fff7f2] disabled:opacity-50"
+          title="Đổi tên tài liệu"
+        >
           <Pencil size={14} />
         </button>
-        <button disabled={busy} onClick={() => onReindex(doc.id)} className="p-2 rounded-xl text-[#9a7868] hover:text-[#a86a4f] hover:bg-[#fff7f2] disabled:opacity-50">
+        <button
+          disabled={busy}
+          onClick={(e) => { e.stopPropagation(); onReindex(doc.id); }}
+          className="p-2 rounded-xl text-[#9a7868] hover:text-[#a86a4f] hover:bg-[#fff7f2] disabled:opacity-50"
+          title="Re-index tài liệu"
+        >
           {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
         </button>
-        <button disabled={busy} onClick={() => onDelete(doc.id)} className="p-2 rounded-xl text-[#9a7868] hover:text-red-500 hover:bg-red-50 disabled:opacity-50">
+        <button
+          disabled={busy}
+          onClick={(e) => { e.stopPropagation(); onDelete(doc.id); }}
+          className="p-2 rounded-xl text-[#9a7868] hover:text-red-500 hover:bg-red-50 disabled:opacity-50"
+          title="Xoá tài liệu"
+        >
           <Trash2 size={14} />
         </button>
       </div>

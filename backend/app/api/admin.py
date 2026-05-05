@@ -6,12 +6,13 @@ Bảo vệ bằng Basic Auth (config trong config.py).
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from app.models.db import Conversation, Dataset, Document, Message, MessageFeedback, UsageLog, get_db
@@ -19,6 +20,15 @@ from app.rag.lifecycle import lifecycle_status, version_of
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 security = HTTPBasic()
+APP_TZ = ZoneInfo(settings.APP_TIMEZONE)
+
+
+def _to_app_iso(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(APP_TZ).isoformat()
 
 
 def _user_conversation_clause():
@@ -40,10 +50,13 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 
 @router.post("/reset-monitoring")
 async def reset_monitoring(db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
-    await db.execute(text("TRUNCATE TABLE usage_logs RESTART IDENTITY"))
-    await db.execute(text("TRUNCATE TABLE message_feedback RESTART IDENTITY"))
+    # Xóa toàn bộ dữ liệu giám sát: logs, feedback, hội thoại, tin nhắn
+    await db.execute(text("TRUNCATE TABLE usage_logs RESTART IDENTITY CASCADE"))
+    await db.execute(text("TRUNCATE TABLE message_feedback RESTART IDENTITY CASCADE"))
+    await db.execute(text("TRUNCATE TABLE messages RESTART IDENTITY CASCADE"))
+    await db.execute(text("TRUNCATE TABLE conversations RESTART IDENTITY CASCADE"))
     await db.commit()
-    return {"message": "Đã đặt lại log giám sát và log đánh giá."}
+    return {"message": "Đã đặt lại toàn bộ giám sát: hội thoại, tin nhắn, log và đánh giá."}
 
 
 # ── Dashboard tổng quan ───────────────────────────────────────────────────────
@@ -151,7 +164,7 @@ async def usage_logs(
             "latency_ms": log.latency_ms,
             "is_rag": log.is_rag,
             "retrieved_chunks": log.retrieved_chunks,
-            "created_at": log.created_at.isoformat(),
+            "created_at": _to_app_iso(log.created_at),
         }
         for log in logs
     ]
@@ -169,6 +182,7 @@ async def daily_stats(days: int = 14, db: AsyncSession = Depends(get_db), _=Depe
                    COUNT(*) as total,
                    SUM(CASE WHEN u.answer_mode = 'rag' THEN 1 ELSE 0 END) as rag_count,
                    SUM(CASE WHEN u.answer_mode = 'ai' THEN 1 ELSE 0 END) as ai_count,
+                   SUM(CASE WHEN u.answer_mode IN ('ai_rag', 'ai+rag') THEN 1 ELSE 0 END) as ai_rag_count,
                    AVG(u.latency_ms) as avg_latency
             FROM usage_logs u
             LEFT JOIN conversations c ON c.id = u.conversation_id
@@ -186,6 +200,7 @@ async def daily_stats(days: int = 14, db: AsyncSession = Depends(get_db), _=Depe
             "total": row.total,
             "rag": row.rag_count,
             "ai": row.ai_count,
+            "ai_rag": getattr(row, "ai_rag_count", 0),
             "avg_latency_ms": round(float(row.avg_latency or 0), 1),
         }
         for row in rows
@@ -216,7 +231,7 @@ async def admin_list_documents(
             "error": d.error_message,
             "version": version_of(d.meta),
             "lifecycle_status": lifecycle_status(d.meta),
-            "created_at": d.created_at.isoformat(),
+            "created_at": _to_app_iso(d.created_at),
         }
         for d in docs
     ]
@@ -242,8 +257,8 @@ async def admin_conversations(
             "id": str(c.id),
             "title": c.title,
             "session_key": c.session_key,
-            "created_at": c.created_at.isoformat(),
-            "updated_at": c.updated_at.isoformat(),
+            "created_at": _to_app_iso(c.created_at),
+            "updated_at": _to_app_iso(c.updated_at),
         }
         for c in convs
     ]
@@ -294,7 +309,7 @@ async def feedback_logs(
             "issue_type": feedback.issue_type,
             "description": feedback.description,
             "answer_excerpt": (message_content[:180] + "…") if message_content and len(message_content) > 180 else (message_content or ""),
-            "created_at": feedback.created_at.isoformat(),
+            "created_at": _to_app_iso(feedback.created_at),
         }
         for feedback, message_content, title in rows
     ]

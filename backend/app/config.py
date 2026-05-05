@@ -17,12 +17,17 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     SECRET_KEY: str = "change-me-in-production-use-openssl-rand-base64-42"
+    # Khoá HMAC dùng để pseudonymise session_key trước khi lưu DB (Luật ANM 2018 / NĐ 13/2023)
+    # Tạo bằng: python -c "import secrets; print(secrets.token_hex(32))"
+    SESSION_HMAC_KEY: str = ""
 
     # ── LLM: Gemini Flash 2.5 (hardcoded, không đổi trên UI) ─
     GEMINI_API_KEY: str = ""
+    GEMINI_API_KEYS: list[str] = []   # Danh sách key phụ để xoay vòng khi quota exhausted
+    TAVILY_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_TEMPERATURE: float = 0.3
-    GEMINI_MAX_OUTPUT_TOKENS: int = 4096
+    GEMINI_MAX_OUTPUT_TOKENS: int = 16384
     GEMINI_TOP_P: float = 0.8
 
     # ── Embedding ───────────────────────────────────────────
@@ -113,7 +118,7 @@ class Settings(BaseSettings):
     # ── Validators: pydantic-settings v2 đọc list từ .env dưới dạng JSON string ──
     @field_validator(
         "CHUNK_SEPARATORS", "INTERNAL_DOC_KEYWORDS",
-        "ALLOWED_EXTENSIONS", "CORS_ORIGINS",
+        "ALLOWED_EXTENSIONS", "CORS_ORIGINS", "GEMINI_API_KEYS",
         mode="before",
     )
     @classmethod

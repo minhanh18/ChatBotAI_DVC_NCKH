@@ -392,16 +392,20 @@
 
   
     /* === UI override === */
-    .chat-fab{display:flex;align-items:center;justify-content:flex-start;gap:8px;width:56px;height:56px;padding:6px 8px;border:1px solid #e3cfc4;border-radius:999px;background:#fff;box-shadow:0 6px 16px rgba(120,75,56,.10);overflow:hidden;transition:width .22s ease,box-shadow .18s ease,transform .18s ease;transform-origin:right center;right:14px;left:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
-    .chat-fab:hover,.chat-fab:focus-visible{width:144px;box-shadow:0 8px 22px rgba(120,75,56,.14)}
+    /* FAB: icon căn giữa vào button tròn, mở rộng sang TRÁI khi hover */
+    .chat-fab{display:flex;align-items:center;justify-content:flex-end;gap:0;width:56px;height:56px;padding:6px;border:1px solid #e3cfc4;border-radius:999px;background:#fff;box-shadow:0 6px 16px rgba(120,75,56,.10);overflow:hidden;transition:width .22s ease,box-shadow .18s ease,transform .18s ease;transform-origin:right center;right:14px;left:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+    .chat-fab:hover,.chat-fab:focus-visible{width:160px;box-shadow:0 8px 22px rgba(120,75,56,.14)}
     .chat-fab:active{cursor:grabbing}
     .chat-fab.hidden{opacity:0;pointer-events:none}
-    .chat-fab-icon-wrap{width:42px;height:42px;flex:0 0 42px;display:flex;align-items:center;justify-content:center;border-radius:50%;overflow:hidden;order:2;margin-left:auto}
-    .chat-fab img{width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:center;pointer-events:none;background:transparent;-webkit-user-drag:none;user-select:none}
-    .chat-fab-label{font-size:13px;font-weight:700;color:#9a624a;line-height:1;white-space:nowrap;opacity:0;transform:translateX(-8px);transition:opacity .18s ease,transform .18s ease;order:1;margin-left:2px}
+    /* Icon wrap: luôn bên phải, chiếm 44px */
+    .chat-fab-icon-wrap{width:44px;height:44px;flex:0 0 44px;display:flex;align-items:center;justify-content:center;border-radius:50%;overflow:hidden;order:2;margin-left:0}
+    .chat-fab img{width:40px;height:40px;border-radius:50%;object-fit:cover;object-position:center;pointer-events:none;background:transparent;-webkit-user-drag:none;user-select:none}
+    /* Label: bên trái icon, không có viền hay nền riêng, hòa vào nền FAB */
+    .chat-fab-label{font-size:13px;font-weight:700;color:#9a624a;line-height:1;white-space:nowrap;opacity:0;transform:translateX(8px);transition:opacity .18s ease,transform .18s ease;order:1;padding-left:10px;flex:1;text-align:left}
     .chat-fab:hover .chat-fab-label,.chat-fab:focus-visible .chat-fab-label{opacity:1;transform:none}
 
-    .chat-panel{width:420px;max-width:calc(100vw - 18px);height:min(700px,calc(100vh - 24px));max-height:calc(100vh - 24px);border-radius:20px;border:1px solid #e3cfc4;background:#f3f4fa;box-shadow:0 16px 36px rgba(69,44,34,.15)}
+    /* Chat panel: không che khuất header, co giãn theo viewport */
+    .chat-panel{position:fixed;width:min(420px,calc(100vw - 28px));height:min(700px,calc(100vh - 90px));max-height:calc(100vh - 90px);border-radius:20px;border:1px solid #e3cfc4;background:#f3f4fa;box-shadow:0 16px 36px rgba(69,44,34,.15)}
     .chat-panel.open{display:flex;flex-direction:column}
     .chat-header{background:#fffdfa;padding:10px 14px;border-bottom:1px solid #ead8cf;display:flex;align-items:center;justify-content:space-between;gap:14px}
     .chat-header-brand{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
@@ -521,14 +525,14 @@
       touch-action:none;
       user-select:none;
     }
-    .chat-fab:hover,.chat-fab:focus-visible{width:142px;box-shadow:0 10px 20px rgba(120,75,56,.14)}
+    .chat-fab:hover,.chat-fab:focus-visible{width:160px;box-shadow:0 10px 20px rgba(120,75,56,.14)}
     .chat-fab.hidden{opacity:0;pointer-events:none}
-    .chat-fab-icon-wrap{order:2;margin-left:auto;width:38px;height:38px;flex:0 0 38px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;background:transparent}
-    .chat-fab img{width:38px;height:38px;display:block;border-radius:50%;object-fit:cover;object-position:center;background:transparent}
-    .chat-fab-label{order:1;font-size:12px;font-weight:700;color:#9a624a;white-space:nowrap;opacity:0;transform:translateX(-8px);transition:opacity .18s ease, transform .18s ease;line-height:1}
+    .chat-fab-icon-wrap{order:2;margin-left:0;width:44px;height:44px;flex:0 0 44px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;background:transparent}
+    .chat-fab img{width:40px;height:40px;display:block;border-radius:50%;object-fit:cover;object-position:center;background:transparent}
+    .chat-fab-label{order:1;font-size:12px;font-weight:700;color:#9a624a;white-space:nowrap;opacity:0;transform:translateX(8px);transition:opacity .18s ease, transform .18s ease;line-height:1;padding-left:10px;flex:1;text-align:left}
     .chat-fab:hover .chat-fab-label,.chat-fab:focus-visible .chat-fab-label{opacity:1;transform:none}
 
-    .chat-panel{width:420px;max-width:calc(100vw - 18px);height:min(720px,calc(100vh - 24px));max-height:calc(100vh - 24px);border-radius:20px;border:1px solid #e3cfc4;background:#f3f4fa;box-shadow:0 16px 36px rgba(69,44,34,.15)}
+    .chat-panel{position:fixed;width:min(420px,calc(100vw - 28px));height:min(720px,calc(100vh - 90px));max-height:calc(100vh - 90px);border-radius:20px;border:1px solid #e3cfc4;background:#f3f4fa;box-shadow:0 16px 36px rgba(69,44,34,.15)}
     .chat-panel.fullscreen{inset:8px !important;width:auto !important;height:auto !important;max-width:none;max-height:none;border-radius:18px;border:1px solid #e3cfc4;box-shadow:0 18px 38px rgba(69,44,34,.16)}
     .chat-panel.fullscreen .chat-body{padding:14px 16px 10px}
 
@@ -2270,99 +2274,185 @@
     </div>
   </div>
 
-  <script src="/static/chatbot-inline.js?v=20260417v9"></script>
+  <script src="/static/chatbot-inline.js?v=20260426fix2"></script>
 
   <style id="chatfab-final-fix">
+    :root{
+      --chat-fab-collapsed:56px;
+      --chat-fab-expanded:190px;
+      --chat-fab-shift:calc(var(--chat-fab-collapsed) - var(--chat-fab-expanded));
+
+      /* Chỉnh icon lúc thu gọn và lúc hover */
+      --chat-fab-icon-box:48px;
+      --chat-fab-icon-img:46px;
+      --chat-fab-icon-right:0px;
+      --chat-fab-icon-y:-8px;
+
+      /* Chỉnh text lúc hover */
+      --chat-fab-label-left:18px;
+      --chat-fab-label-right:62px;
+      --chat-fab-label-y:0px;
+    }
+
     #chatFab.chat-fab{
-      width:54px !important;
-      min-width:54px !important;
-      max-width:54px !important;
-      height:54px !important;
-      padding:6px 8px !important;
+      width:var(--chat-fab-collapsed) !important;
+      min-width:var(--chat-fab-collapsed) !important;
+      max-width:var(--chat-fab-collapsed) !important;
+      height:56px !important;
+      min-height:56px !important;
+      padding:0 !important;
       display:flex !important;
       align-items:center !important;
-      justify-content:flex-start !important;
-      gap:10px !important;
+      justify-content:center !important;
+      gap:0 !important;
       overflow:hidden !important;
       border:1px solid #e3cfc4 !important;
       border-radius:999px !important;
       background:#fff !important;
       box-shadow:0 8px 22px rgba(120,75,56,.12) !important;
-      transition:width .2s ease, box-shadow .18s ease, opacity .18s ease !important;
+      cursor:grab !important;
+      touch-action:none !important;
+      user-select:none !important;
       transform:none !important;
       transform-origin:right center !important;
-      will-change:width, opacity !important;
+      transition:width .2s ease, max-width .2s ease, transform .2s ease, box-shadow .18s ease, border-color .18s ease, background-color .18s ease, opacity .18s ease !important;
+      will-change:left, top, width, transform !important;
       backface-visibility:hidden !important;
+      z-index:9999 !important;
     }
+
     #chatFab.chat-fab:hover,
     #chatFab.chat-fab:focus-visible{
-      width:154px !important;
-      min-width:154px !important;
-      max-width:154px !important;
+      width:var(--chat-fab-expanded) !important;
+      min-width:var(--chat-fab-expanded) !important;
+      max-width:var(--chat-fab-expanded) !important;
+      transform:translateX(var(--chat-fab-shift)) !important;
+      background:#fff7f2 !important;
+      border-color:#d4b5a7 !important;
       box-shadow:0 12px 26px rgba(120,75,56,.16) !important;
     }
+
+    #chatFab.chat-fab.dragging,
+    #chatFab.chat-fab.dragging:hover,
+    #chatFab.chat-fab.dragging:focus-visible,
+    #chatFab.chat-fab.hidden{
+      width:var(--chat-fab-collapsed) !important;
+      min-width:var(--chat-fab-collapsed) !important;
+      max-width:var(--chat-fab-collapsed) !important;
+      transform:none !important;
+      transition:none !important;
+    }
+
     #chatFab .chat-fab-icon-wrap{
       order:2 !important;
-      margin-left:auto !important;
-      flex:0 0 40px !important;
-      width:40px !important;
-      height:40px !important;
+      flex:0 0 46px !important;
+      width:46px !important;
+      height:46px !important;
+      margin:0 !important;
       display:flex !important;
       align-items:center !important;
       justify-content:center !important;
+      border-radius:50% !important;
+      overflow:hidden !important;
+      background:transparent !important;
       position:relative !important;
       z-index:2 !important;
-      border-radius:999px !important;
-      overflow:hidden !important;
+      transform:translate(7px, -27px) !important;
     }
+
     #chatFab img{
-      width:40px !important;
-      height:40px !important;
+      width:44px !important;
+      height:44px !important;
       display:block !important;
       border-radius:50% !important;
       object-fit:cover !important;
+      object-position:center center !important;
       background:transparent !important;
       pointer-events:none !important;
       -webkit-user-drag:none !important;
       user-select:none !important;
     }
+
     #chatFab .chat-fab-label{
       order:1 !important;
-      position:absolute !important;
-      left:14px !important;
-      right:56px !important;
-      top:50% !important;
-      transform:translateY(-50%) translateX(-6px) !important;
+      flex:0 0 0 !important;
+      width:0 !important;
+      min-width:0 !important;
       margin:0 !important;
-      display:block !important;
+      padding:0 !important;
+      position:static !important;
+      transform:translateX(8px) !important;
+      display:flex !important;
+      align-items:center !important;
+      justify-content:center !important;
       white-space:nowrap !important;
       overflow:hidden !important;
-      text-overflow:ellipsis !important;
+      text-overflow:clip !important;
       opacity:0 !important;
-      font-size:12px !important;
-      line-height:1.1 !important;
+      font-size:14px !important;
+      line-height:1 !important;
       font-weight:700 !important;
       color:#9a624a !important;
       pointer-events:none !important;
-      z-index:1 !important;
+      border:none !important;
+      border-radius:0 !important;
+      background:transparent !important;
+      box-shadow:none !important;
       transition:opacity .16s ease, transform .16s ease !important;
     }
+
     #chatFab:hover .chat-fab-label,
     #chatFab:focus-visible .chat-fab-label{
+      flex:1 1 auto !important;
+      width:auto !important;
+      padding:0 12px 0 16px !important;
       opacity:1 !important;
-      transform:translateY(-50%) translateX(0) !important;
+      transform:none !important;
     }
-    #chatFab.dragging,
-    #chatFab.dragging:hover,
-    #chatFab.dragging:focus-visible{
-      width:54px !important;
-      min-width:54px !important;
-      max-width:54px !important;
-      box-shadow:0 8px 22px rgba(120,75,56,.12) !important;
-    }
-    #chatFab.dragging .chat-fab-label{opacity:0 !important;}
+
+    #chatFab.dragging .chat-fab-label,
+    #chatFab.hidden .chat-fab-label{opacity:0 !important;}
     #chatFab.hidden{opacity:0 !important;pointer-events:none !important;}
-    @media (max-width: 640px){
+
+    #chatPanel.chat-panel{
+      width:min(456px, calc(100vw - 28px)) !important;
+      max-width:calc(100vw - 28px) !important;
+      height:min(700px, calc(100dvh - 118px)) !important;
+      max-height:calc(100dvh - 118px) !important;
+      display:none;
+      flex-direction:column !important;
+      overflow:hidden !important;
+      border-radius:20px !important;
+      z-index:9998 !important;
+    }
+
+    #chatPanel.chat-panel.open{display:flex !important;}
+    #chatPanel .chat-panel-shell{flex:1 1 auto !important;min-height:0 !important;overflow:hidden !important;}
+    #chatPanel .chat-frame{display:block !important;width:100% !important;height:100% !important;border:0 !important;}
+
+    #chatPanel.chat-panel.fullscreen{
+      position:fixed !important;
+      inset:0 !important;
+      left:0 !important;
+      top:0 !important;
+      right:0 !important;
+      bottom:0 !important;
+      width:100vw !important;
+      max-width:none !important;
+      height:100dvh !important;
+      max-height:none !important;
+      border-radius:0 !important;
+      border:none !important;
+      box-shadow:none !important;
+    }
+
+    @media (max-width: 767px){
+      :root{
+        --chat-fab-collapsed:52px;
+        --chat-fab-expanded:52px;
+        --chat-fab-shift:0px;
+      }
+
       #chatFab.chat-fab,
       #chatFab.chat-fab:hover,
       #chatFab.chat-fab:focus-visible{
@@ -2370,8 +2460,51 @@
         min-width:52px !important;
         max-width:52px !important;
         height:52px !important;
+        padding:5px !important;
+        transform:none !important;
       }
+
+      #chatFab .chat-fab-icon-wrap{
+        flex-basis:42px !important;
+        width:42px !important;
+        height:42px !important;
+      }
+      #chatFab img{width:40px !important;height:40px !important;}
       #chatFab .chat-fab-label{display:none !important;}
+
+      #chatPanel.chat-panel{
+        width:calc(100vw - 16px) !important;
+        max-width:calc(100vw - 16px) !important;
+        height:min(78dvh, calc(100dvh - 96px)) !important;
+        max-height:calc(100dvh - 96px) !important;
+        border-radius:18px !important;
+      }
+
+      #chatPanel.chat-panel.fullscreen{
+        inset:0 !important;
+        width:100vw !important;
+        height:100dvh !important;
+        border-radius:0 !important;
+      }
+    }
+
+    /* Hover: giữ nguyên độ cao icon, chỉ đẩy sang phải nhẹ */
+    #chatFab:hover .chat-fab-icon-wrap,
+    #chatFab:focus-visible .chat-fab-icon-wrap{
+      transform:translate(10px, -27px) !important;
+    }
+
+    /* Hover: kéo text gần icon, vẫn có padding vừa phải */
+    #chatFab:hover .chat-fab-label,
+    #chatFab:focus-visible .chat-fab-label{
+      flex:0 0 auto !important;
+      width:auto !important;
+      min-width:0 !important;
+      padding:0 8px 0 12px !important;
+      margin-right:8px !important;
+      justify-content:flex-start !important;
+      opacity:1 !important;
+      transform:none !important;
     }
   </style>
 

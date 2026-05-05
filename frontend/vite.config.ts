@@ -8,7 +8,14 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: resolve(__dirname, 'app.html'),
+      output: {
+        // Giữ nguyên tên các module chunk để tránh Terser TDZ bug
+        manualChunks: undefined,
+      },
     },
+    // Dùng esbuild thay Terser: nhanh hơn, không có TDZ bug với React components
+    minify: 'esbuild',
+    target: 'es2020',
   },
   server: {
     port: 3000,

@@ -54,7 +54,7 @@ function AdminLogin({ onLogin }: { onLogin: (auth: AdminAuth) => void }) {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-[#f6f0ec] px-4">
+    <div className="h-[100dvh] min-h-0 flex items-center justify-center bg-[#f6f0ec] px-4">
       <div className="w-full max-w-sm bg-white rounded-[28px] border border-[#e7d4ca] shadow-[0_18px_50px_rgba(118,76,56,0.10)] p-7">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-12 h-12 rounded-2xl border border-[#ead6cb] bg-[#fff8f4] flex items-center justify-center overflow-hidden shrink-0">
@@ -150,7 +150,7 @@ export default function App() {
 
   if (mode === 'user') {
     return (
-      <div className="h-screen bg-[#f6f0ec]">
+      <div className="h-[100dvh] min-h-0 bg-[#f6f0ec]">
         <ChatWindow
           sessionScope="user"
           adminMode={false}
@@ -166,7 +166,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#f6f0ec]">
+    <div className="flex flex-col h-[100dvh] min-h-0 bg-[#f6f0ec]">
       <nav className="bg-[#fffdfa]/95 backdrop-blur border-b border-[#ead8cf] px-4 flex items-center gap-1 h-14 shadow-sm">
         <div className="flex items-center gap-2 mr-4 min-w-0">
           <img

@@ -37,4 +37,31 @@ def ingest_document_task(self, document_id: str):
     except Exception as exc:
         countdown = min(300, 15 * (2 ** self.request.retries))
         logger.warning("Task ingest sẽ retry: %s — %s (sau %ss)", document_id, exc, countdown)
-        raise self.retry(exc=exc, countdown=countdown)
+        try:
+            raise self.retry(exc=exc, countdown=countdown)
+        except self.MaxRetriesExceededError:
+            # Hết lần retry → đánh dấu document là error
+            _mark_document_failed(document_id, f"Đã thử {self.max_retries} lần nhưng không thành công: {exc}")
+            logger.error("Task ingest hết retry cho %s: %s", document_id, exc)
+
+
+def _mark_document_failed(document_id: str, message: str) -> None:
+    """Đánh dấu document là error khi ingest task hết retry."""
+    try:
+        from app.rag.ingestor import AsyncSessionLocal
+        from app.models.db import Document
+        from sqlalchemy import select
+        from uuid import UUID
+
+        async def _set_failed():
+            async with AsyncSessionLocal() as db:
+                stmt = select(Document).where(Document.id == UUID(document_id))
+                doc = (await db.execute(stmt)).scalar_one_or_none()
+                if doc:
+                    doc.status = "error"
+                    doc.error_message = message[:500]
+                    await db.commit()
+
+        asyncio.run(_set_failed())
+    except Exception as e:
+        logger.error("Không thể đánh dấu document failed: %s — %s", document_id, e)

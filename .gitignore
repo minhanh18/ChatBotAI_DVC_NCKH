@@ -1,0 +1,57 @@
+# ── Môi trường & bí mật ──────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example          # Giữ file mẫu (không chứa giá trị thật)
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+*.log
+
+# ── Node / Frontend ───────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+*.tsbuildinfo
+
+# ── Database / Storage ────────────────────────────────────────
+*.sqlite3
+*.db
+pgdata/
+uploads/
+vector_store/
+
+# ── Docker volumes ────────────────────────────────────────────
+docker-volumes/
+
+# ── IDE ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Celery ────────────────────────────────────────────────────
+celerybeat-schedule
+celerybeat.pid
+
+# ── Test / Coverage ───────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/

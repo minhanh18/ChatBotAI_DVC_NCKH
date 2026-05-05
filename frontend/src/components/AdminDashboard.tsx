@@ -24,6 +24,12 @@ import { MessageBubble } from './MessageBubble';
 
 const BOT_AVATAR = '/static/assets/img/chatbot/icon_chatbot_circle_final.png';
 
+function modeLabel(mode?: string) {
+  if (mode === 'rag') return '📚 RAG tài liệu';
+  if (mode === 'ai_rag' || mode === 'ai+rag') return '🤖📚 AI + RAG';
+  return '🤖 AI/Search';
+}
+
 export function AdminDashboard({ auth }: { auth: AdminAuth }) {
   const [stats, setStats] = useState<any>(null);
   const [logs, setLogs] = useState<any[]>([]);
@@ -163,7 +169,7 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
                 {Object.entries(stats.answer_modes_7d || {}).map(([mode, count]: any) => (
                   <div key={mode}>
                     <div className="flex justify-between text-xs text-[#8c6a5b] mb-1">
-                      <span>{mode === 'rag' ? '📚 RAG tài liệu' : '🤖 AI thường'}</span>
+                      <span>{modeLabel(mode)}</span>
                       <span>{count} lượt</span>
                     </div>
                     <div className="h-2 bg-[#f3e8e1] rounded-full">
@@ -354,7 +360,7 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
                     <tr key={log.id} className="hover:bg-[#fffaf7]">
                       <td className="px-4 py-2.5 text-[#9a7868] whitespace-nowrap">{log.created_at ? new Date(log.created_at).toLocaleString('vi-VN') : 'N/A'}</td>
                       <td className="px-4 py-2.5 text-[#734232] max-w-xs truncate">{log.query}</td>
-                      <td className="px-4 py-2.5 text-[#8c6a5b]">{log.mode}</td>
+                      <td className="px-4 py-2.5 text-[#8c6a5b]">{modeLabel(log.mode)}</td>
                       <td className="px-4 py-2.5 text-[#8c6a5b]">{log.retrieved_chunks}</td>
                       <td className="px-4 py-2.5 text-[#8c6a5b]">{log.latency_ms}ms</td>
                       <td className="px-4 py-2.5 text-[#8c6a5b]">{log.tokens}</td>

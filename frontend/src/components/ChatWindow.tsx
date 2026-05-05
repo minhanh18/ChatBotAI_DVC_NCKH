@@ -10,11 +10,12 @@ import {
   Plus,
   Search,
   Send,
+  Square,
   Trash2,
   X,
 } from 'lucide-react';
 import { MessageBubble } from './MessageBubble';
-import type { Citation, Conversation, Message } from '../api/client';
+import type { Citation, Conversation, Message, LegalRef, ServiceLink } from '../api/client';
 import {
   deleteConversation,
   getConversations,
@@ -25,8 +26,33 @@ import {
 } from '../api/client';
 
 const USER_BOT_AVATAR = '/static/assets/img/chatbot/icon_chatbot_circle_final.png';
-const STREAM_IDLE: StreamState = { active: false, text: '', citations: [] };
 
+/** Inline thinking dots — dùng trong ChatWindow khi chờ phản hồi đầu tiên */
+function ThinkingIndicator({ compact }: { compact: boolean }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 500);
+    return () => clearInterval(id);
+  }, []);
+
+  if (elapsed >= 30) {
+    const dots = '.'.repeat((Math.floor(elapsed / 1.5) % 3) + 1);
+    return (
+      <span className={`text-[#b27454] ${compact ? 'text-xs' : 'text-sm'}`}>
+        Vui lòng đợi thêm một chút<span className="font-mono tracking-widest">{dots}</span>
+      </span>
+    );
+  }
+  return (
+    <div className={`flex items-center gap-2 ${compact ? 'py-0.5' : 'py-1'}`}>
+      {[0, 180, 360].map((delay) => (
+        <span key={delay} className={`rounded-full bg-[#b27454] animate-pulse ${compact ? 'w-1.5 h-1.5' : 'w-2 h-2'}`}
+          style={{ animationDelay: `${delay}ms` }} />
+      ))}
+    </div>
+  );
+}
 function ensureSessionKey(storageKey: string, sessionScope: 'user' | 'admin') {
   const existing = sessionStorage.getItem(storageKey);
   if (existing) {
@@ -62,8 +88,10 @@ interface StreamState {
   active: boolean;
   text: string;
   citations: Citation[];
-  mode?: 'rag' | 'ai';
+  mode?: 'rag' | 'ai' | 'ai_rag';
   error?: string;
+  legalRefs?: LegalRef[];
+  serviceLinks?: ServiceLink[];
 }
 
 interface ChatWindowProps {
@@ -73,6 +101,8 @@ interface ChatWindowProps {
   hideHistory?: boolean;
   embedded?: boolean;
 }
+
+const STREAM_IDLE: StreamState = { active: false, text: '', citations: [] };
 
 export function ChatWindow({
   standalone = false,
@@ -91,6 +121,8 @@ export function ChatWindow({
   const [pendingUserText, setPendingUserText] = useState('');
   const [pendingUserTime, setPendingUserTime] = useState<string | null>(null);
   const [stream, setStream] = useState<StreamState>(STREAM_IDLE);
+  // Khai báo trước mọi callback dùng setStreamPhase để tránh lỗi TDZ khi build/minify.
+  const [, setStreamPhase] = useState<'idle' | 'sending' | 'thinking' | 'streaming'>('idle');
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [input, setInput] = useState('');
@@ -149,7 +181,11 @@ export function ChatWindow({
     try {
       const list = await getMessages(convId);
       setMessages(list);
-      requestAnimationFrame(() => scrollToBottom('auto'));
+      requestAnimationFrame(() => {
+        if (!pendingAssistantTopRef.current) {
+          scrollToBottom('auto');
+        }
+      });
     } catch {
       // ignore
     }
@@ -214,11 +250,31 @@ export function ChatWindow({
     scrollToBottom(stream.active ? 'smooth' : 'auto');
   }, [messages, pendingUserText, stream, scrollToBottom]);
 
+  // Cuộn lên đầu phản hồi CHỈ KHI anchor đã bị khuất lên trên viewport.
+  // Nếu toàn bộ phản hồi vẫn nằm trong trang hiện tại → không cuộn.
   useEffect(() => {
     if (!stream.active || autoScrolledForCurrentReplyRef.current) return;
     autoScrolledForCurrentReplyRef.current = true;
-    scrollLatestReplyIntoView('smooth');
-  }, [scrollLatestReplyIntoView, stream.active]);
+
+    requestAnimationFrame(() => {
+      const anchor = latestReplyAnchorRef.current;
+      const viewport = scrollViewportRef.current;
+      if (!anchor || !viewport) return;
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const viewportRect = viewport.getBoundingClientRect();
+      const headerH = headerRef.current?.offsetHeight ?? 60;
+
+      // Anchor bị khuất lên trên (trên header) → cuộn lên đặt anchor cách header 12px
+      const isAboveViewport = anchorRect.top < viewportRect.top + headerH + 4;
+      if (isAboveViewport) {
+        const gap = embedded ? 10 : 12;
+        const targetTop = Math.max(0, viewport.scrollTop + anchorRect.top - viewportRect.top - headerH - gap);
+        viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+      }
+      // Nếu anchor còn hiển thị trong viewport → không làm gì cả
+    });
+  }, [scrollLatestReplyIntoView, stream.active, embedded]);
 
   useEffect(() => {
     if (!pendingAssistantTopRef.current || !lastAssistantMessageId) return;
@@ -233,6 +289,16 @@ export function ChatWindow({
       const gap = embedded ? 10 : 12;
       const targetTop = Math.max(0, assistantEl.offsetTop - headerHeight - gap);
       viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+      // Một số trình duyệt cập nhật layout ảnh/audio chậm; nhắc lại một lần để đảm bảo
+      // mép trên phản hồi bot nằm sát đầu viewport sau khi stream hoàn tất.
+      window.setTimeout(() => {
+        const latestViewport = scrollViewportRef.current;
+        const latestAssistant = latestAssistantRef.current;
+        if (latestViewport && latestAssistant) {
+          const latestHeader = headerRef.current?.offsetHeight ?? 0;
+          latestViewport.scrollTo({ top: Math.max(0, latestAssistant.offsetTop - latestHeader - gap), behavior: 'smooth' });
+        }
+      }, 90);
       pendingAssistantTopRef.current = false;
     });
   }, [embedded, lastAssistantMessageId, messages]);
@@ -241,6 +307,7 @@ export function ChatWindow({
     (convId: string) => {
       abortRef.current?.abort();
       setStream(STREAM_IDLE);
+      setStreamPhase('idle');
       setPendingUserText('');
       setPendingUserTime(null);
       setActiveConvId(convId);
@@ -250,9 +317,18 @@ export function ChatWindow({
     [loadMessages],
   );
 
+  const handleStop = useCallback(() => {
+    abortRef.current?.abort();
+    setStream(STREAM_IDLE);
+    setStreamPhase('idle');
+    setPendingUserText('');
+    setPendingUserTime(null);
+  }, []);
+
   const newConversation = useCallback(() => {
     abortRef.current?.abort();
     setStream(STREAM_IDLE);
+    setStreamPhase('idle');
     setPendingUserText('');
     setPendingUserTime(null);
     setActiveConvId(null);
@@ -385,6 +461,8 @@ export function ChatWindow({
       setPendingUserText(optimisticUserText);
       setPendingUserTime(new Date().toISOString());
       setStream({ active: true, text: '', citations: [] });
+      // Hiển thị câu hỏi là đã gửi ngay lập tức; bot chuyển sang trạng thái đang phản hồi.
+      setStreamPhase('thinking');
       setVoiceStatus('');
       autoScrolledForCurrentReplyRef.current = false;
 
@@ -398,17 +476,26 @@ export function ChatWindow({
             resolvedConvId = id;
             setActiveConvId(id);
           },
-          onMode: (mode: 'rag' | 'ai') => {
+          onMode: (mode: 'rag' | 'ai' | 'ai_rag') => {
             setStream((s) => ({ ...s, mode }));
+            setStreamPhase('thinking');
           },
           onToken: (token: string) => {
             setStream((s) => ({ ...s, text: s.text + token }));
+            setStreamPhase('streaming');
           },
           onCitations: (citations: Citation[]) => {
             setStream((s) => ({ ...s, citations: mergeCitations(s.citations, citations) }));
           },
+          onLegalRefs: (refs: LegalRef[]) => {
+            setStream((s) => ({ ...s, legalRefs: refs }));
+          },
+          onServiceLinks: (links: ServiceLink[]) => {
+            setStream((s) => ({ ...s, serviceLinks: links }));
+          },
           onDone: async () => {
             setStream(STREAM_IDLE);
+            setStreamPhase('idle');
             setPendingUserText('');
             setPendingUserTime(null);
             setVoiceStatus('');
@@ -436,6 +523,7 @@ export function ChatWindow({
               citations: [],
               error: shouldHideTechnical ? 'Xin lỗi! Hiện tại tôi đang gặp một số sự cố.' : err,
             });
+            setStreamPhase('idle');
             setPendingUserText('');
             setPendingUserTime(null);
           },
@@ -473,6 +561,12 @@ export function ChatWindow({
     [activeConvId, adminMode, input, loadConversations, loadMessages, selectedImage, sessionKey, stream.active],
   );
 
+  const handleReload = useCallback((messageContent: string) => {
+    if (stream.active) return;
+    // Điền vào input và auto-submit sau khi submitMessage đã được khởi tạo.
+    submitMessage(messageContent);
+  }, [stream.active, submitMessage]);
+
   const filteredConversations = useMemo(() => {
     const q = historySearch.trim().toLowerCase();
     const items = q
@@ -485,7 +579,13 @@ export function ChatWindow({
   }, [conversations, historySearch, pinnedIds]);
 
   const canSend = Boolean(input.trim() || selectedImage) && !stream.active;
-  const pendingDeliveryStatus = stream.active && !stream.text && !stream.mode ? 'sending' : 'sent';
+  // #6: Câu hỏi hiển thị trạng thái "Đã gửi" ngay lập tức.
+  // ThinkingIndicator bên dưới là component riêng — không liên quan đến delivery status.
+  // Phase: 'sending' = câu hỏi đã submit nhưng chưa có phản hồi gì
+  //        'thinking' = đã nhận được mode/ack từ server, đang chờ token
+  //        'streaming' = đang nhận tokens
+  //        'idle' = rảnh
+  const pendingDeliveryStatus: 'sending' | 'sent' = 'sent';
 
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = Array.from(e.clipboardData.items || []);
@@ -716,6 +816,13 @@ export function ChatWindow({
                       botAvatar={botAvatar}
                       variant={isUserUi ? 'user' : 'admin'}
                       onFeedback={message.role === 'assistant' ? submitFeedback : undefined}
+                      onReload={(() => {
+                        if (message.role === 'user') return () => handleReload(message.content);
+                        // Assistant reload: tìm câu hỏi user liền trước
+                        const idx = messages.indexOf(message);
+                        const prevUser = [...messages].slice(0, idx).reverse().find(m => m.role === 'user');
+                        return prevUser ? () => handleReload(prevUser.content) : undefined;
+                      })()}
                       compact={compactUi}
                     />
                   </div>
@@ -739,23 +846,42 @@ export function ChatWindow({
 
               {(stream.active || stream.error) && (
                 <>
-                  {stream.active && <div ref={latestReplyAnchorRef} className="h-px" />}
-                  <MessageBubble
-                  message={{
-                    id: 'streaming-assistant',
-                    role: 'assistant',
-                    content: stream.error || stream.text,
-                    citations: stream.citations,
-                    answer_mode: stream.mode,
-                    created_at: new Date().toISOString(),
-                  }}
-                  botAvatar={botAvatar}
-                  isStreaming={stream.active}
-                  streamingMode={stream.mode}
-                  deliveryStatus="responding"
-                  variant={isUserUi ? 'user' : 'admin'}
-                  compact={compactUi}
-                />
+                  {/* ThinkingIndicator: hiện khi đang chờ phản hồi đầu tiên */}
+                  {stream.active && !stream.text && !stream.mode && !stream.error && (
+                    <div className={`flex items-start gap-3 ${compactUi ? 'px-2 py-1' : 'px-2 py-2'}`}>
+                      {botAvatar && (
+                        <img src={botAvatar} alt="Bot" className={`shrink-0 rounded-full object-cover ${compactUi ? 'w-10 h-10 mt-1' : 'w-12 h-12 mt-1'}`} />
+                      )}
+                      <div ref={latestReplyAnchorRef} className={`rounded-[20px] border border-[#ead8cf] bg-[#fffdfa] text-slate-700 shadow-[0_4px_14px_rgba(116,76,56,0.04)] ${compactUi ? 'px-4 py-3.5 text-[14px] leading-6 font-normal' : 'px-3.5 py-2.5 text-[14px] leading-[1.68] font-normal'}`}>
+                        <ThinkingIndicator compact={compactUi} />
+                      </div>
+                    </div>
+                  )}
+                  {/* Assistant bubble: chỉ hiện khi đã có token hoặc lỗi */}
+                  {(stream.text || stream.mode || stream.error) && (
+                    <>
+                      {stream.active && <div ref={latestReplyAnchorRef} className="h-px" />}
+                      <MessageBubble
+                        message={{
+                          id: 'streaming-assistant',
+                          role: 'assistant',
+                          content: stream.error || stream.text,
+                          citations: stream.citations,
+                          answer_mode: stream.mode,
+                          created_at: new Date().toISOString(),
+                        }}
+                        legalRefs={stream.legalRefs}
+                        serviceLinks={stream.serviceLinks}
+                        onStop={stream.active ? handleStop : undefined}
+                        botAvatar={botAvatar}
+                        isStreaming={stream.active}
+                        streamingMode={stream.mode}
+                        deliveryStatus="responding"
+                        variant={isUserUi ? 'user' : 'admin'}
+                        compact={compactUi}
+                      />
+                    </>
+                  )}
                 </>
               )}
               <div ref={messagesEndRef} />
@@ -860,20 +986,30 @@ export function ChatWindow({
                 />
               </div>
 
-              <button
-                onClick={() => submitMessage()}
-                disabled={!canSend}
-                className={`shrink-0 grid place-items-center self-center text-white transition disabled:cursor-not-allowed ${compactUi ? 'w-9 h-9 rounded-[16px]' : 'w-[38px] h-[38px] rounded-[17px]'} ${
-                  canSend
-                    ? isUserUi
+              {stream.active ? (
+                /* Stop button — hiển thị khi đang stream */
+                <button
+                  onClick={handleStop}
+                  className={`shrink-0 grid place-items-center self-center text-white transition ${compactUi ? 'w-9 h-9 rounded-[16px]' : 'w-[38px] h-[38px] rounded-[17px]'} bg-[#c0412b] hover:bg-[#a8361e] shadow-[0_8px_18px_rgba(192,65,43,0.28)]`}
+                  title="Dừng phản hồi"
+                >
+                  <Square size={compactUi ? 13 : 14} className="block shrink-0" />
+                </button>
+              ) : (
+                /* Send button — hiển thị khi rảnh */
+                <button
+                  onClick={() => submitMessage()}
+                  disabled={!canSend}
+                  className={`shrink-0 grid place-items-center self-center text-white transition disabled:cursor-not-allowed ${compactUi ? 'w-9 h-9 rounded-[16px]' : 'w-[38px] h-[38px] rounded-[17px]'} ${
+                    canSend
                       ? 'bg-[#b2694c] hover:bg-[#9e5d46] shadow-[0_8px_18px_rgba(178,105,76,0.22)]'
-                      : 'bg-[#b2694c] hover:bg-[#9e5d46] shadow-[0_8px_18px_rgba(178,105,76,0.22)]'
-                    : 'bg-[#d6b8ab] opacity-90'
-                }`}
-                title="Gửi"
-              >
-                <Send size={compactUi ? 14 : 15} className="block shrink-0" />
-              </button>
+                      : 'bg-[#d6b8ab] opacity-90'
+                  }`}
+                  title="Gửi"
+                >
+                  <Send size={compactUi ? 14 : 15} className="block shrink-0" />
+                </button>
+              )}
             </div>
 
             <div className={`mt-1.5 text-center ${compactUi ? 'text-[11px]' : 'text-[11px]'} ${isUserUi ? 'text-[#967567]' : 'text-[#967567]'}`}>

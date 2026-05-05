@@ -142,8 +142,10 @@ class LegalEnricher:
             _add("Cổng dịch vụ Thuế điện tử (eTax)", "https://thuedientu.gdt.gov.vn")
             _add("Hỗ trợ người nộp thuế", "https://hotronnt.gdt.gov.vn")
 
-        # Nếu đề cập dịch vụ công
-        if "dichvucong" in response_text or "dịch vụ công" in response_text.lower():
+        # Nếu đề cập dịch vụ công VÀ có từ khóa thủ tục cụ thể (không chỉ đề cập chung)
+        if ("dichvucong" in response_text or "dịch vụ công" in response_text.lower()) and any(
+            kw in response_text.lower() for kw in ["thủ tục", "đăng ký", "nộp hồ sơ", "cấp giấy", "trực tuyến", "nộp trực tuyến"]
+        ):
             _add("Cổng Dịch vụ công Quốc gia", "https://dichvucong.gov.vn")
 
         return refs[:6]  # Tối đa 6 nguồn

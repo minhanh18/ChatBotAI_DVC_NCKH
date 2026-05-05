@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import mimetypes
 import uuid
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -191,7 +193,7 @@ async def list_documents(dataset_id: str, db: AsyncSession = Depends(get_db), _=
     ]
 
 
-@router.get("/documents/{document_id}")
+@router.get("/{document_id}")
 async def get_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
@@ -206,7 +208,7 @@ async def get_document(document_id: str, db: AsyncSession = Depends(get_db), _=D
     }
 
 
-@router.patch("/documents/{document_id}")
+@router.patch("/{document_id}")
 async def rename_document(
     document_id: str,
     name: str = Form(...),
@@ -225,7 +227,7 @@ async def rename_document(
     return {"message": "Đã cập nhật tên tài liệu", "id": str(doc.id), "name": doc.name}
 
 
-@router.post("/documents/{document_id}/activate")
+@router.post("/{document_id}/activate")
 async def activate_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
@@ -247,7 +249,7 @@ async def activate_document(document_id: str, db: AsyncSession = Depends(get_db)
     return {"message": "Đã kích hoạt phiên bản tài liệu này cho RAG."}
 
 
-@router.post("/documents/{document_id}/deprecate")
+@router.post("/{document_id}/deprecate")
 async def deprecate_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
@@ -257,7 +259,7 @@ async def deprecate_document(document_id: str, db: AsyncSession = Depends(get_db
     return {"message": "Đã đánh dấu tài liệu là deprecated."}
 
 
-@router.delete("/documents/{document_id}")
+@router.delete("/{document_id}")
 async def delete_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
@@ -287,7 +289,48 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(get_db), 
     return {"message": "Đã xoá tài liệu"}
 
 
-@router.post("/documents/{document_id}/reindex")
+@router.get("/{document_id}/file")
+async def serve_document_file(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Serve file tài liệu gốc để xem trong trình duyệt.
+    Hỗ trợ PDF fragment #page=N để mở đúng trang.
+    Không yêu cầu xác thực admin để iframe trong chatbot có thể load được.
+    """
+    doc = (await db.execute(
+        select(Document).where(Document.id == UUID(document_id))
+    )).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(404, "Tài liệu không tồn tại")
+
+    file_path = Path(doc.file_path) if doc.file_path else None
+    if not file_path or not file_path.exists():
+        # Fallback: thử tìm theo UPLOAD_DIR + doc_id
+        for ext in settings.ALLOWED_EXTENSIONS:
+            candidate = Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
+            if candidate.exists():
+                file_path = candidate
+                break
+
+    if not file_path or not file_path.exists():
+        raise HTTPException(404, "File không tồn tại trên server")
+
+    media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=doc.name,
+        headers={
+            "Content-Disposition": "inline",                          # render trong browser
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.post("/{document_id}/reindex")
 async def reindex_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
@@ -302,7 +345,7 @@ async def reindex_document(document_id: str, db: AsyncSession = Depends(get_db),
     return {"message": "Đã bắt đầu re-index có kiểm soát."}
 
 
-@router.get("/documents/{document_id}/segments")
+@router.get("/{document_id}/segments")
 async def list_segments(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     result = await db.execute(
         select(DocumentSegment)

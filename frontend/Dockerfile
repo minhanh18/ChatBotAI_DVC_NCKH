@@ -1,8 +1,10 @@
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps \
+  && ROLLUP_VERSION=$(node -p "require('./node_modules/rollup/package.json').version") \
+  && npm install --no-save --legacy-peer-deps @rollup/rollup-linux-x64-gnu@$ROLLUP_VERSION
 
 COPY . .
 RUN npm run build

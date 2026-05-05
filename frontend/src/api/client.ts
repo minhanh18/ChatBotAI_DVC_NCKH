@@ -1,5 +1,17 @@
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface LegalRef {
+  label: string;       // "Điều 15 Luật TNDN 2025"
+  url?: string;        // link thuvienphapluat.vn
+  status?: string;     // "còn hiệu lực" | "hết hiệu lực"
+}
+
+export interface ServiceLink {
+  label?: string;      // "Đăng ký kinh doanh trực tuyến"
+  title?: string;      // backend v3 dùng title
+  url: string;
+}
+
 export interface Citation {
   document_name: string;
   content: string;
@@ -11,13 +23,32 @@ export interface Citation {
   page_date?: string;
   fetched_at?: string;
   reliability_score?: number;
+  document_id?: string;   // ID tài liệu gốc để mở file
+  page_number?: number;   // Số trang đầu tiên của chunk
+}
+
+/**
+ * Tạo URL xem tài liệu gốc, trỏ thẳng đến số trang nếu có.
+ * PDF hỗ trợ fragment #page=N (Chrome, Firefox, Safari, PDF.js).
+ */
+export function buildDocumentPageUrl(citation: Citation): string | null {
+  if (citation.source_type === 'web') return citation.url ?? null;
+  if (!citation.document_id) return citation.url ?? null;
+  const base = `/api/documents/${citation.document_id}/file`;
+  return citation.page_number ? `${base}#page=${citation.page_number}` : base;
+}
+
+export function buildDocumentBaseUrl(citation: Citation): string | null {
+  if (citation.source_type === 'web') return citation.url ?? null;
+  if (!citation.document_id) return citation.url ?? null;
+  return `/api/documents/${citation.document_id}/file`;
 }
 
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  answer_mode?: 'rag' | 'ai';
+  answer_mode?: 'rag' | 'ai' | 'ai_rag';
   citations: Citation[];
   created_at: string;
   feedback?: 'like' | 'dislike' | null;
@@ -51,7 +82,8 @@ export interface Document {
 }
 
 export interface SSEEvent {
-  type: 'token' | 'citations' | 'done' | 'error' | 'mode' | 'conversation_id';
+  type: 'token' | 'citations' | 'done' | 'error' | 'mode' | 'conversation_id' | 'legal_refs' | 'service_links';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
 }
 
@@ -94,9 +126,11 @@ function authHeaders(auth?: AdminAuth) {
 
 export interface ChatStreamCallbacks {
   onConversationId?: (id: string) => void;
-  onMode?: (mode: 'rag' | 'ai') => void;
+  onMode?: (mode: 'rag' | 'ai' | 'ai_rag') => void;
   onToken?: (token: string) => void;
   onCitations?: (citations: Citation[]) => void;
+  onLegalRefs?: (refs: LegalRef[]) => void;
+  onServiceLinks?: (links: ServiceLink[]) => void;
   onDone?: (meta: { tokens: number; latency_ms: number }) => void;
   onError?: (err: string) => void;
 }
@@ -130,6 +164,8 @@ async function consumeSSE(
           case 'mode': callbacks.onMode?.(event.data); break;
           case 'token': callbacks.onToken?.(event.data); break;
           case 'citations': callbacks.onCitations?.(event.data); break;
+          case 'legal_refs': callbacks.onLegalRefs?.(event.data); break;
+          case 'service_links': callbacks.onServiceLinks?.(event.data); break;
           case 'done': callbacks.onDone?.(event.data); break;
           case 'error': callbacks.onError?.(event.data); break;
         }

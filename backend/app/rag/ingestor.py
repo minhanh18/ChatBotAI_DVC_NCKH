@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.db import AsyncSessionLocal, Document, DocumentSegment
-from app.rag.chunker import RecursiveCharacterChunker
+from app.rag.chunker import LegalAwareChunker
 from app.rag.embedder import _is_rate_limited_error, embedding_service
 from app.rag.extractor import ExtractorError, extract_text
 from app.rag.legal_metadata import detect_legal_document_metadata
@@ -21,10 +21,9 @@ from app.rag.lifecycle import merge_meta
 
 logger = logging.getLogger(__name__)
 
-chunker = RecursiveCharacterChunker(
+chunker = LegalAwareChunker(
     chunk_size=settings.CHUNK_SIZE,
     chunk_overlap=settings.CHUNK_OVERLAP,
-    separators=settings.CHUNK_SEPARATORS,
 )
 
 
@@ -89,6 +88,13 @@ async def ingest_document(document_id: str) -> None:
             doc.status = "ready"
             doc.error_message = None
             await db.commit()
+
+            # Invalidate BM25 cache cho dataset này
+            try:
+                from app.rag.retriever import retriever as _retriever
+                _retriever.invalidate_cache(str(doc.dataset_id) if doc.dataset_id else None)
+            except Exception:
+                pass
 
             logger.info("  ✓ Index xong: %d segments", len(chunks))
 

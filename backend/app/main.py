@@ -57,6 +57,22 @@ async def startup():
     logger.info("✓ Database ready")
     logger.info("✓ %s v%s started", settings.APP_NAME, settings.APP_VERSION)
 
+    # Background GC cho session cache (chạy mỗi 30 phút)
+    async def _session_gc_loop():
+        import asyncio as _asyncio
+        while True:
+            await _asyncio.sleep(1800)
+            try:
+                from app.chat.session_cache import gc_expired_sessions
+                removed = gc_expired_sessions()
+                if removed:
+                    logger.info("Session GC: removed %d expired sessions", removed)
+            except Exception as _e:
+                logger.debug("Session GC error (ignored): %s", _e)
+
+    import asyncio as _asyncio
+    _asyncio.create_task(_session_gc_loop())
+
 
 @app.on_event("shutdown")
 async def shutdown():

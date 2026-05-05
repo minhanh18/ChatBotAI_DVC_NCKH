@@ -3,6 +3,7 @@ version: "3.9"
 # ── Shared env cho backend + worker ──────────────────────────────────────────
 x-backend-env: &backend-env
   GEMINI_API_KEY: ${GEMINI_API_KEY}
+  TAVILY_API_KEY: ${TAVILY_API_KEY}
   SECRET_KEY: ${SECRET_KEY:-changeme-use-openssl-rand-base64-42}
   DEBUG: ${DEBUG:-false}
   # DB

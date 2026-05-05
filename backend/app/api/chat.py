@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import io
 import json
-from datetime import timezone
+import re
+from datetime import timezone, datetime
 from typing import Optional
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -18,9 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.router import AnswerMode, RouteDecision, agent_router
 from app.chat.engine import chat_engine
-from app.chat.evaluator import is_greeting_query
+from app.chat.evaluator import is_greeting_query, is_out_of_domain, out_of_domain_reply
 from app.config import settings
-from app.models.db import Conversation, Message, MessageFeedback, get_db, now_utc
+from app.models.db import Conversation, Message, MessageFeedback, UsageLog, get_db, now_utc
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 APP_TZ = ZoneInfo(settings.APP_TIMEZONE)
@@ -43,32 +44,105 @@ class FeedbackRequest(BaseModel):
 
 @router.post("/stream")
 async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    import time as _time
+    _request_start_ms = _time.time()  # bắt đầu đo latency từ khi nhận request
     if not req.query.strip():
         raise HTTPException(400, "Query không được để trống")
 
     conversation = await _get_or_create_conversation(db, req.conversation_id, req.session_key)
     user_msg = await _save_user_message(db, conversation, req.query)
     history = await _load_history(db, conversation.id, exclude_message_id=user_msg.id)
+
+    # Từ chối ngay nếu câu hỏi rõ ràng ngoài lĩnh vực hành chính/pháp lý
+    if is_out_of_domain(req.query) and not is_greeting_query(req.query):
+        ood_text = out_of_domain_reply()
+        async def _ood_stream():
+            yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
+            yield f"data: {json.dumps({'type': 'mode', 'data': 'ai'})}\n\n"
+            for part in _split_static_stream_text(ood_text):
+                yield f"data: {json.dumps({'type': 'token', 'data': part})}\n\n"
+            from app.utils.data_crypto import mask_pii as _mask_pii
+            assistant_msg = Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content=ood_text,
+                answer_mode="ai",
+                citations=[],
+                tokens_used=max(1, len(ood_text) // 4),
+                latency_ms=0,
+            )
+            conversation.updated_at = datetime.utcnow()
+            db.add(assistant_msg)
+            await db.flush()
+            db.add(UsageLog(
+                conversation_id=conversation.id,
+                message_id=assistant_msg.id,
+                query_text=_mask_pii(req.query[:500]),
+                answer_mode="ai",
+                tokens_used=max(1, len(ood_text) // 4),
+                latency_ms=0,
+                is_rag=False,
+                retrieved_chunks=0,
+            ))
+            await db.commit()
+            yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(ood_text) // 4), 'latency_ms': 0}})}\n\n"
+        return _streaming_response(_ood_stream)
+
+    clarification_text = _context_clarification_text(req.query, history)
+    if clarification_text:
+        async def event_stream():
+            yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
+            yield f"data: {json.dumps({'type': 'mode', 'data': 'ai'})}\n\n"
+            for part in _split_static_stream_text(clarification_text):
+                yield f"data: {json.dumps({'type': 'token', 'data': part})}\n\n"
+            assistant_msg = Message(
+                conversation_id=conversation.id,
+                role='assistant',
+                content=clarification_text,
+                answer_mode='ai',
+                citations=[],
+                tokens_used=max(1, len(clarification_text) // 4),
+                latency_ms=0,
+            )
+            conversation.updated_at = now_utc()
+            db.add(assistant_msg)
+            await db.flush()
+            from app.utils.data_crypto import mask_pii
+            db.add(UsageLog(
+                conversation_id=conversation.id,
+                message_id=assistant_msg.id,
+                query_text=mask_pii(req.query[:500]),
+                answer_mode='ai',
+                tokens_used=max(1, len(clarification_text) // 4),
+                latency_ms=0,
+                is_rag=False,
+                retrieved_chunks=0,
+            ))
+            await db.commit()
+            yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(clarification_text) // 4), 'latency_ms': 0}})}\n\n"
+        return _streaming_response(event_stream)
+
     effective_query = _resolve_effective_query(req.query, history)
 
     requested_mode = AnswerMode(req.mode) if req.mode in ("rag", "ai") else None
     force_web = await _should_auto_force_web(db, conversation.id, req.query)
-    force_mode = requested_mode if requested_mode == AnswerMode.RAG else (AnswerMode.AI if force_web else requested_mode)
+    # Không ép AI/search trước khi RAG được kiểm tra. force_web chỉ được dùng ở tầng fallback
+    # hoặc khi router đã quyết định AI vì tài liệu không đủ khớp.
+    force_mode = requested_mode
     decision = await agent_router.route(
         query=effective_query,
         db=db,
         dataset_id=req.dataset_id,
         force_mode=force_mode,
     )
-    force_web = force_web or bool(decision.assessment.get("should_force_web"))
-    if (
-        not force_web
-        and not is_greeting_query(req.query)
-        and requested_mode != AnswerMode.RAG
-        and decision.mode == AnswerMode.AI
-        and not bool(decision.assessment.get("should_use_rag"))
-    ):
-        force_web = True
+    # Chỉ bật web khi router đã kết luận AI sau bước retrieve, hoặc người dùng hỏi cần kiểm chứng mới nhất.
+    # Nếu router chọn RAG (có chunks) thì KHÔNG ép force_web — engine sẽ tự fallback web khi RAG trả [[RAG_NO_ANSWER]].
+    # force_web chỉ áp dụng khi router đã chọn AI (không tìm được chunk liên quan).
+    rag_has_chunks = decision.mode == AnswerMode.RAG and bool(decision.chunks)
+    force_web = bool(
+        (not rag_has_chunks and force_web)
+        or (decision.mode == AnswerMode.AI and decision.assessment.get("should_force_web"))
+    )
 
     async def event_stream():
         yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -79,6 +153,8 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             db=db,
             conversation=conversation,
             force_web=force_web,
+            session_key=req.session_key,
+            request_start_ms=_request_start_ms,
         ):
             yield chunk
 
@@ -138,7 +214,8 @@ async def chat_stream_image(
 async def list_conversations(session_key: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     stmt = select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)
     if session_key:
-        stmt = stmt.where(Conversation.session_key == session_key)
+        from app.utils.data_crypto import pseudonymise_session_key
+        stmt = stmt.where(Conversation.session_key == pseudonymise_session_key(session_key))
     result = await db.execute(stmt)
     convs = result.scalars().all()
     return [
@@ -232,6 +309,14 @@ async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(g
     if not conv:
         raise HTTPException(404, "Conversation không tồn tại")
 
+    # Xóa session memory ngay khi conversation bị xóa
+    try:
+        from app.chat.session_cache import delete_session
+        if conv.session_key:
+            delete_session(conv.session_key)
+    except Exception:
+        pass
+
     marker = f"deleted::{conv.session_key or 'anon'}::{uuid4().hex}"
     conv.session_key = marker
     conv.updated_at = now_utc()
@@ -246,7 +331,10 @@ async def _get_or_create_conversation(db: AsyncSession, conversation_id: Optiona
         if conv:
             return conv
 
-    conv = Conversation(session_key=session_key)
+    # Mã hoá session_key trước khi lưu DB (pseudonymisation per Luật ANM 2018 / NĐ 13/2023)
+    from app.utils.data_crypto import pseudonymise_session_key
+    safe_key = pseudonymise_session_key(session_key) if session_key else session_key
+    conv = Conversation(session_key=safe_key)
     db.add(conv)
     await db.flush()
     return conv
@@ -265,30 +353,108 @@ def _is_context_light_query(query: str) -> bool:
     normalized = " ".join((query or "").split()).lower()
     if not normalized:
         return True
-    generic_patterns = [
-        "bao nhiêu", "lệ phí", "mức phạt", "phạt bao nhiêu", "như nào", "như thế nào",
-        "còn hiệu lực không", "có miễn không", "mới nhất", "điều kiện sao", "thủ tục sao", "chi phí sao",
+
+    # Các câu follow-up thường ngắn, dùng đại từ/ẩn chủ ngữ hoặc viết tắt (đk = đăng ký).
+    followup_patterns = [
+        "nào", "những trường hợp", "trường hợp nào", "bắt buộc", "có bắt buộc",
+        "phải không", "cần không", "được không", "làm sao", "như nào", "như thế nào",
+        "bao nhiêu", "lệ phí", "mức phạt", "phạt bao nhiêu", "điều kiện sao",
+        "thủ tục sao", "chi phí sao", "ở đâu", "khi nào", "ai phải", "ai được",
+        "đk", "đăng kí", "đăng ký", "nó", "việc này", "cái này", "trường hợp đó",
+        "còn hiệu lực không", "có miễn không", "mới nhất",
     ]
-    if len(normalized) <= 24:
+    if len(normalized) <= 56:
         return True
-    return any(pattern in normalized for pattern in generic_patterns)
+    return any(pattern in normalized for pattern in followup_patterns)
+
+
+def _normalize_followup_query_text(text: str) -> str:
+    text = " ".join((text or "").split())
+    text = re.sub(r"\bđk\b", "đăng ký", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bđăng kí\b", "đăng ký", text, flags=re.IGNORECASE)
+    return text
+
+
+_TOPIC_PATTERNS: list[tuple[str, str]] = [
+    (r"\b(tạm\s+trú|đăng\s+ký\s+tạm\s+trú|gia\s+hạn\s+tạm\s+trú)\b", "đăng ký tạm trú"),
+    (r"\b(thường\s+trú|đăng\s+ký\s+thường\s+trú)\b", "đăng ký thường trú"),
+    (r"\b(cư\s+trú)\b", "cư trú"),
+    (r"\b(căn\s+cước|cccd|căn\s+cước\s+công\s+dân)\b", "căn cước công dân"),
+    (r"\b(khai\s+sinh|hộ\s+tịch)\b", "hộ tịch/khai sinh"),
+    (r"\b(hộ\s+kinh\s+doanh|đăng\s+ký\s+kinh\s+doanh|thành\s+lập\s+hộ\s+kinh\s+doanh)\b", "hộ kinh doanh"),
+    (r"\b(tndn|thuế\s+thu\s+nhập\s+doanh\s+nghiệp|thuế\s+tndn)\b", "thuế thu nhập doanh nghiệp"),
+    (r"\b(gtgt|vat|thuế\s+giá\s+trị\s+gia\s+tăng)\b", "thuế giá trị gia tăng"),
+    (r"\b(bảo\s+hiểm\s+xã\s+hội|bhxh|bảo\s+hiểm\s+y\s+tế|bhyt)\b", "bảo hiểm"),
+    (r"\b(đất\s+đai|sổ\s+đỏ|quyền\s+sử\s+dụng\s+đất)\b", "đất đai"),
+]
+
+
+def _extract_topics(text: str) -> list[str]:
+    normalized = _normalize_followup_query_text(text).lower()
+    topics: list[str] = []
+    for pattern, label in _TOPIC_PATTERNS:
+        if re.search(pattern, normalized, flags=re.IGNORECASE) and label not in topics:
+            topics.append(label)
+    return topics
+
+
+def _is_self_contained_query(query: str) -> bool:
+    q = _normalize_followup_query_text(query).lower()
+    if _extract_topics(q):
+        return True
+    if len(q) > 80:
+        return True
+    return False
+
+
+def _collect_conversation_topics(history: list[Message]) -> list[str]:
+    topics: list[str] = []
+    for msg in history:
+        if msg.role != "user":
+            continue
+        for topic in _extract_topics(msg.content or ""):
+            if topic not in topics:
+                topics.append(topic)
+    return topics
+
+
+def _split_static_stream_text(text: str, chunk_size: int = 80):
+    for i in range(0, len(text), chunk_size):
+        yield text[i:i + chunk_size]
+
+
+def _context_clarification_text(query: str, history: list[Message]) -> str | None:
+    clean_query = _normalize_followup_query_text(query)
+    if not clean_query or _is_self_contained_query(clean_query) or not _is_context_light_query(clean_query):
+        return None
+    topics = _collect_conversation_topics(history)
+    if len(topics) <= 1:
+        return None
+    topics_text = ", ".join(topics[-4:])
+    return (
+        "Mình chưa chắc bạn đang hỏi tiếp theo chủ đề nào trong phiên này. "
+        f"Trước đó có nhiều chủ đề khác nhau: {topics_text}.\n\n"
+        "Bạn vui lòng nói rõ bạn muốn hỏi về chủ đề nào để mình tra cứu và trả lời chính xác hơn."
+    )
 
 
 def _resolve_effective_query(query: str, history: list[Message]) -> str:
-    clean_query = " ".join((query or "").split())
+    """Tạo truy vấn hiệu lực ngắn gọn cho RAG/search.
+
+    Quan trọng: không nhét toàn bộ tóm tắt phản hồi vào query truy xuất/web search, vì sẽ làm
+    Tavily/search nhận query quá dài và lẫn chủ đề cũ. Log hội thoại chỉ dùng để xác định chủ đề.
+    """
+    clean_query = _normalize_followup_query_text(query)
     if not clean_query:
         return query
-    if not _is_context_light_query(clean_query):
+    if _is_self_contained_query(clean_query) or not _is_context_light_query(clean_query):
         return clean_query
 
-    previous_user_messages = [
-        (msg.content or "").strip()
-        for msg in reversed(history)
-        if msg.role == "user" and (msg.content or "").strip()
-    ]
-    for previous in previous_user_messages:
-        if previous != clean_query:
-            return f"{previous}\n\nCâu hỏi tiếp theo cùng ngữ cảnh: {clean_query}"
+    topics = _collect_conversation_topics(history)
+    if len(topics) == 1:
+        return f"Chủ đề hiện tại: {topics[0]}. Câu hỏi: {clean_query}"
+
+    # Không rõ chủ đề hoặc nhiều chủ đề: giữ nguyên để hệ thống hỏi làm rõ/không kéo nhiễu.
     return clean_query
 
 

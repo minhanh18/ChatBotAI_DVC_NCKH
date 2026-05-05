@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, urljoin
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -64,12 +64,13 @@ QUERY_ABBREVIATIONS = {
 }
 
 PRIORITY_DOMAINS = [
-    "vbpl.vn",
     "dichvucong.gov.vn",
+    "bocongan.gov.vn",
+    "chinhphu.vn",
+    "baohiemxahoi.gov.vn",
+    "vbpl.vn",
     "luatvietnam.vn",
     "thuvienphapluat.vn",
-    "baohiemxahoi.gov.vn",
-    "chinhphu.vn",
 ]
 
 BLOCKED_URL_PATTERNS = [
@@ -120,6 +121,41 @@ def clean_text_preserve_breaks(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+SERVICE_ACTION_KEYWORDS = [
+    "thực hiện", "nộp hồ sơ", "nộp trực tuyến", "dịch vụ công", "dvc",
+    "biểu mẫu", "mẫu đơn", "tải", "download", "hồ sơ", "thủ tục", "chi tiết",
+]
+
+
+def extract_relevant_links(soup: BeautifulSoup, base_url: str, query: str, limit: int = 12) -> list[tuple[str, str]]:
+    """Trích các link thao tác/hồ sơ từ trang đã fetch để LLM không tự bịa URL."""
+    links: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    query_l = normalize_query_text(query).lower()
+    subject_terms = exact_subject_terms(query_l) + significant_tokens(query_l)
+    for a in soup.find_all("a", href=True):
+        href = str(a.get("href") or "").strip()
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
+            continue
+        url = urljoin(base_url, href)
+        if not url.startswith(("http://", "https://")):
+            continue
+        label = clean_text(a.get_text(" ", strip=True)) or url
+        haystack = f"{label} {url}".lower()
+        is_action = any(k in haystack for k in SERVICE_ACTION_KEYWORDS)
+        is_official_dvc = "dichvucong.gov.vn" in url.lower()
+        is_query_related = any(t in haystack for t in subject_terms)
+        if not (is_action or is_official_dvc or is_query_related):
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        links.append((label[:120], url))
+        if len(links) >= limit:
+            break
+    return links
+
+
 def normalize_query_text(query: str) -> str:
     normalized = clean_text(query)
     if not normalized:
@@ -131,7 +167,32 @@ def normalize_query_text(query: str) -> str:
 
 def sanitize_web_query(query: str) -> str:
     normalized = normalize_query_text(query)
-    normalized = re.sub(r"câu hỏi tiếp theo cùng ngữ cảnh\s*:\s*", " ", normalized, flags=re.IGNORECASE)
+    match = re.search(r"Câu hỏi tiếp theo cùng ngữ cảnh\s*:\s*(.+)$", normalized, flags=re.IGNORECASE | re.DOTALL)
+    if match:
+        followup = clean_text(match.group(1))
+        previous = clean_text(normalized[: match.start()])
+        if followup:
+            follow_l = followup.lower()
+            intent_map = {
+                "hồ sơ": ["hồ sơ", "giấy tờ", "cần gì", "chuẩn bị gì"],
+                "lệ phí": ["lệ phí", "mức phí", "bao nhiêu tiền", "mất bao nhiêu"],
+                "nơi nộp": ["nộp ở đâu", "làm ở đâu", "cơ quan nào", "đơn vị nào"],
+                "thời hạn": ["bao lâu", "mấy ngày", "thời gian giải quyết", "thời hạn"],
+                "điều kiện": ["điều kiện", "trường hợp nào", "yêu cầu gì"],
+            }
+            detected_intent = None
+            for label, patterns in intent_map.items():
+                if any(p in follow_l for p in patterns):
+                    detected_intent = label
+                    break
+            previous_clean = re.sub(r"\b(tôi|mình|muốn|hỏi|cho hỏi|làm sao|như nào|thế nào|là gì|được không)\b", " ", previous, flags=re.IGNORECASE)
+            previous_clean = clean_text(previous_clean)
+            if detected_intent and previous_clean:
+                normalized = f"{detected_intent} {previous_clean}"
+            elif previous_clean:
+                normalized = f"{followup} {previous_clean}"
+            else:
+                normalized = followup
     for phrase in sorted(DISPUTE_RECHECK_KEYWORDS, key=len, reverse=True):
         normalized = re.sub(re.escape(phrase), " ", normalized, flags=re.IGNORECASE)
     return clean_text(normalized)
@@ -150,10 +211,6 @@ def is_dispute_recheck_query(query: str) -> bool:
     return _contains_any(normalize_query_text(query).lower(), DISPUTE_RECHECK_KEYWORDS)
 
 
-def is_time_sensitive_query(query: str) -> bool:
-    return is_legal_update_query(query)
-
-
 def should_prioritize_fresh_web_context(query: str) -> bool:
     return is_legal_update_query(query)
 
@@ -165,19 +222,15 @@ def should_search_web(query: str) -> bool:
 async def maybe_fetch_web_context(query: str, force: bool = False) -> tuple[str, list[dict]]:
     if not settings.ENABLE_WEB_SEARCH:
         return "", []
-
     query = (query or "").strip()
     if not query:
         return "", []
-
     if not (force or should_search_web(query)):
         return "", []
-
     try:
         results = await search_and_fetch(query)
         if not results:
             return "", []
-
         context_parts: list[str] = []
         citations: list[dict] = []
         for index, result in enumerate(results, start=1):
@@ -198,7 +251,7 @@ async def maybe_fetch_web_context(query: str, force: bool = False) -> tuple[str,
             citations.append(
                 {
                     "document_name": result.title,
-                    "content": result.snippet or result.content[:260],
+                    "content": (result.snippet + "\n" + result.content[-900:] if "Liên kết thao tác/hồ sơ" in result.content else (result.snippet or result.content[:360])),
                     "score": min(0.99, max(0.55, result.freshness_score)),
                     "segment_id": result.url,
                     "url": result.url,
@@ -215,6 +268,46 @@ async def maybe_fetch_web_context(query: str, force: bool = False) -> tuple[str,
         return "", []
 
 
+async def tavily_search(client: httpx.AsyncClient, query: str) -> list[dict]:
+    api_key = (settings.TAVILY_API_KEY or "").strip()
+    if not api_key:
+        logger.warning("Tavily API key is missing; web search is disabled.")
+        return []
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "advanced" if should_prioritize_fresh_web_context(query) else "basic",
+        "max_results": max(settings.WEB_SEARCH_RESULTS_LIMIT, 5),
+        "include_answer": False,
+        "include_images": False,
+        "include_raw_content": False,
+    }
+    include_domains = priority_domains_for_query(query)
+    if include_domains:
+        payload["include_domains"] = include_domains
+    response = await client.post("https://api.tavily.com/search", json=payload)
+    response.raise_for_status()
+    data = response.json() or {}
+    items = data.get("results") or []
+    results: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        url = normalize_search_result_url(str(item.get("url") or "").strip())
+        if not url or url in seen:
+            continue
+        results.append({
+            "title": clean_text(str(item.get("title") or url)),
+            "url": url,
+            "snippet": clean_text(str(item.get("content") or item.get("snippet") or "")),
+        })
+        seen.add(url)
+        if len(results) >= settings.WEB_SEARCH_RESULTS_LIMIT:
+            break
+    logger.info("Tavily results for [%s]: %s", query, len(results))
+    logger.info("Tavily parsed URLs for [%s]: %s", query, [r.get("url") for r in results[:5]])
+    return results
+
+
 async def search_and_fetch(query: str) -> list[WebResult]:
     explicit_urls = extract_urls(query)
     async with httpx.AsyncClient(
@@ -229,27 +322,18 @@ async def search_and_fetch(query: str) -> list[WebResult]:
             )
             results = [item for item in fetched if isinstance(item, WebResult)]
             return rank_web_results(query, results)[: settings.WEB_SEARCH_FETCH_PAGES]
-
         raw_results: list[dict] = []
-        for variant in build_search_queries(query):
-            try:
-                ddg_results = await duckduckgo_search(client, variant)
-                if ddg_results:
-                    raw_results.extend(ddg_results)
-            except Exception as exc:
-                logger.warning("DuckDuckGo query failed for %s: %s", variant, exc)
-
-            if not raw_results:
-                try:
-                    bing_results = await bing_search(client, variant)
-                    if bing_results:
-                        raw_results.extend(bing_results)
-                except Exception as exc:
-                    logger.warning("Bing query failed for %s: %s", variant, exc)
-
+        search_variants = build_search_queries(query)
+        # Thực hiện tất cả các query search song song thay vì tuần tự
+        search_tasks = [tavily_search(client, variant) for variant in search_variants]
+        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        for variant, result in zip(search_variants, search_results):
+            if isinstance(result, Exception):
+                logger.warning("Tavily query failed for %s: %s", variant, result)
+            else:
+                raw_results.extend(result)
         if not raw_results:
             return []
-
         deduped: list[dict] = []
         seen_urls: set[str] = set()
         for item in raw_results:
@@ -260,108 +344,37 @@ async def search_and_fetch(query: str) -> list[WebResult]:
                 continue
             seen_urls.add(url)
             deduped.append(item)
-
+        logger.info("raw_results total = %s", len(raw_results))
+        logger.info("candidate_results total = %s", len(deduped))
+        logger.info("candidate URLs = %s", [r.get("url") for r in deduped[:5]])
         ranked_candidates = sorted(deduped, key=lambda item: score_search_result(query, item), reverse=True)
         fetch_limit = max(settings.WEB_SEARCH_FETCH_PAGES + 1, 5 if should_prioritize_fresh_web_context(query) else settings.WEB_SEARCH_FETCH_PAGES)
-        tasks = [
-            fetch_page_context(client, item["url"], item.get("title"), item.get("snippet", ""), query=query)
-            for item in ranked_candidates[: fetch_limit * 2]
-        ]
+        tasks = []
+        for item in ranked_candidates[: fetch_limit * 2]:
+            logger.info("Fetching page content: %s", item.get("url"))
+            tasks.append(fetch_page_context(client, item["url"], item.get("title"), item.get("snippet", ""), query=query))
         fetched = await asyncio.gather(*tasks, return_exceptions=True)
         results = [item for item in fetched if isinstance(item, WebResult)]
+        logger.info("fetched WebResult total = %s", len(results))
+        logger.info("fetched result URLs = %s", [r.url for r in results[:5]])
         return rank_web_results(query, results)[:fetch_limit]
 
 
-async def duckduckgo_search(client: httpx.AsyncClient, query: str) -> list[dict]:
-    response = await client.get("https://html.duckduckgo.com/html/", params={"q": query, "kl": "vn-vi"})
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    results: list[dict] = []
-    seen: set[str] = set()
-    for block in soup.select(".result"):
-        link = block.select_one("a.result__a") or block.select_one(".result__title a")
-        if not link:
-            continue
-
-        raw_href = link.get("href", "").strip()
-        url = normalize_search_result_url(raw_href)
-        if not url or url in seen:
-            continue
-
-        if not is_candidate_url_allowed(url, query):
-            continue
-
-        snippet_node = block.select_one(".result__snippet")
-        snippet = clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
-        title = clean_text(link.get_text(" ", strip=True)) or url
-
-        seen.add(url)
-        results.append({"title": title, "url": url, "snippet": snippet})
-        if len(results) >= settings.WEB_SEARCH_RESULTS_LIMIT:
-            break
-
-    return results
-
-
-async def bing_search(client: httpx.AsyncClient, query: str) -> list[dict]:
-    response = await client.get("https://www.bing.com/search", params={"q": query, "setlang": "vi-VN"})
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    results: list[dict] = []
-    seen: set[str] = set()
-    for block in soup.select("li.b_algo"):
-        link = block.select_one("h2 a")
-        if not link:
-            continue
-
-        url = (link.get("href") or "").strip()
-        if not url or url in seen:
-            continue
-
-        if not is_candidate_url_allowed(url, query):
-            continue
-
-        title = clean_text(link.get_text(" ", strip=True)) or url
-        snippet_node = block.select_one(".b_caption p")
-        snippet = clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
-
-        seen.add(url)
-        results.append({"title": title, "url": url, "snippet": snippet})
-        if len(results) >= settings.WEB_SEARCH_RESULTS_LIMIT:
-            break
-
-    return results
-
-
-async def fetch_page_context(
-    client: httpx.AsyncClient,
-    url: str,
-    title_hint: str | None = None,
-    snippet_hint: str = "",
-    query: str = "",
-) -> WebResult | None:
+async def fetch_page_context(client: httpx.AsyncClient, url: str, title_hint: str | None = None, snippet_hint: str = "", query: str = "") -> WebResult | None:
     try:
         response = await client.get(url)
         response.raise_for_status()
     except Exception as exc:
         logger.debug("Skip url %s: %s", url, exc)
         return None
-
     final_url = str(response.url)
     if not is_candidate_url_allowed(final_url, query):
         return None
-
     soup = BeautifulSoup(response.text, "html.parser")
     for selector in ["script", "style", "noscript", "svg", "header", "footer", "nav", "form", "aside"]:
         for node in soup.select(selector):
             node.decompose()
-
     title = title_hint or clean_text((soup.title.get_text(" ", strip=True) if soup.title else "")) or final_url
-
     content_candidates: list[str] = []
     for selector in ["main", "article", "[role='main']", ".content", ".article", ".post-content", "body"]:
         for node in soup.select(selector):
@@ -370,30 +383,22 @@ async def fetch_page_context(
                 content_candidates.append(text)
         if content_candidates:
             break
-
     if not content_candidates:
         return None
-
     raw_content = max(content_candidates, key=len)
+    relevant_links = extract_relevant_links(soup, final_url, query)
     content = extract_focus_content(raw_content, query, settings.WEB_SEARCH_MAX_CONTEXT_CHARS)
-    if looks_like_generic_page(final_url, title, raw_content):
+    if relevant_links:
+        links_note = "\n".join(f"- {label}: {url}" for label, url in relevant_links)
+        content = f"{content}\n\nLiên kết thao tác/hồ sơ trích từ trang:\n{links_note}".strip()
+    if looks_like_generic_page(final_url, title, raw_content) and not relevant_links:
         return None
-
     page_date = extract_page_date(soup, response.headers, title, snippet_hint, raw_content)
     legal_status_excerpt = extract_legal_status_excerpt(raw_content)
     snippet = legal_status_excerpt or clean_text(snippet_hint) or content[:260]
     fetched_at = now_app_time().strftime("%H:%M:%S %d/%m/%Y")
     domain = get_domain(final_url)
-
-    result = WebResult(
-        title=title,
-        url=final_url,
-        snippet=snippet,
-        content=content,
-        domain=domain,
-        page_date=page_date,
-        fetched_at=fetched_at,
-    )
+    result = WebResult(title=title, url=final_url, snippet=snippet, content=content, domain=domain, page_date=page_date, fetched_at=fetched_at)
     result.reliability_score = score_domain_reliability(domain, query, result.title)
     result.freshness_score = score_web_result(query, result)
     return result
@@ -403,12 +408,19 @@ def build_search_queries(query: str) -> list[str]:
     base = sanitize_web_query(query)
     if not base:
         return []
-
     now = now_app_time()
     date_vi = now.strftime("%d/%m/%Y")
     year = now.strftime("%Y")
-
     variants = [base]
+    base_l = base.lower()
+    if any(k in base_l for k in ["thủ tục", "hồ sơ", "nộp", "đăng ký", "cấp", "dịch vụ công", "trực tuyến", "tạm trú", "căn cước", "khai sinh", "hộ kinh doanh"]):
+        variants.extend([
+            f"site:dichvucong.gov.vn {base}",
+            f"site:dichvucong.gov.vn \"{base}\"",
+            f"{base} Cổng Dịch vụ công Quốc gia",
+            f"{base} nộp hồ sơ trực tuyến dichvucong.gov.vn",
+            f"{base} biểu mẫu hồ sơ dichvucong.gov.vn",
+        ])
     if should_prioritize_fresh_web_context(base):
         variants.extend([
             f"{base} mới nhất",
@@ -417,12 +429,6 @@ def build_search_queries(query: str) -> list[str]:
             f"{base} cập nhật {date_vi}",
             f"{base} {year}",
         ])
-
-    for domain in priority_domains_for_query(base)[:4]:
-        variants.append(f"site:{domain} {base}")
-        if should_prioritize_fresh_web_context(base):
-            variants.append(f"site:{domain} {base} {year}")
-
     ordered: list[str] = []
     seen: set[str] = set()
     for item in variants:
@@ -437,7 +443,7 @@ def rank_web_results(query: str, results: list[WebResult]) -> list[WebResult]:
     for result in results:
         result.reliability_score = score_domain_reliability(result.domain, query, result.title)
         result.freshness_score = score_web_result(query, result)
-    return sorted(results, key=lambda item: (item.freshness_score, item.reliability_score), reverse=True)
+    return sorted(results, key=lambda item: (item.reliability_score, item.freshness_score), reverse=True)
 
 
 def score_search_result(query: str, item: dict) -> float:
@@ -448,39 +454,42 @@ def score_search_result(query: str, item: dict) -> float:
     domain = get_domain(url)
     if not is_candidate_url_allowed(url, query):
         return -999.0
-
     score = score_domain_reliability(domain, query, title) * 4.0
     for token in significant_tokens(query):
         if token in haystack:
             score += 1.0
         if token in title.lower():
             score += 1.4
-
     if should_prioritize_fresh_web_context(query):
         year = now_app_time().strftime("%Y")
         if year in haystack:
             score += 1.6
         if any(keyword in haystack for keyword in ["hiện hành", "mới nhất", "hiệu lực", "sửa đổi", "bổ sung", "thay thế"]):
             score += 2.2
-
     return score
 
 
 def score_web_result(query: str, result: WebResult) -> float:
     haystack = f"{result.title} {result.snippet} {result.content} {result.url}".lower()
     score = 0.35 + (result.reliability_score * 0.3)
-
     for token in significant_tokens(query):
         if token in haystack:
             score += 0.08
         if token in result.title.lower():
             score += 0.11
-
     if should_prioritize_fresh_web_context(query):
         score += date_recency_bonus(result.page_date)
         if any(keyword in haystack for keyword in ["hiện hành", "mới nhất", "hiệu lực", "sửa đổi", "bổ sung", "thay thế"]):
             score += 0.14
-
+    # Ưu tiên URL DVC dẫn đến trang thông tin thủ tục chính thức (dvc-chi-tiet-thu-tuc-nganh-doc)
+    url_l = result.url.lower()
+    if "dichvucong.gov.vn" in url_l:
+        if "dvc-chi-tiet-thu-tuc-nganh-doc" in url_l:
+            score += 0.20   # trang thủ tục chính thức theo ngành dọc
+        elif "dvc-tthc-thu-tuc-hanh-chinh-chi-tiet" in url_l:
+            score += 0.05   # trang chi tiết có nút nộp — giữ nhưng ưu tiên thấp hơn
+        elif "dvc-chi-tiet-thu-tuc-hanh-chinh" in url_l:
+            score += 0.08   # trang chi tiết thủ tục hành chính thông thường
     return min(score, 0.99)
 
 
@@ -495,7 +504,6 @@ def extract_page_date(soup: BeautifulSoup, headers: httpx.Headers, *text_candida
         "meta[itemprop='dateModified']",
         "time[datetime]",
     ]
-
     for selector in meta_candidates:
         node = soup.select_one(selector)
         if not node:
@@ -504,7 +512,6 @@ def extract_page_date(soup: BeautifulSoup, headers: httpx.Headers, *text_candida
         parsed = normalize_date_string(raw)
         if parsed:
             return parsed
-
     last_modified = headers.get("last-modified")
     if last_modified:
         try:
@@ -512,12 +519,10 @@ def extract_page_date(soup: BeautifulSoup, headers: httpx.Headers, *text_candida
             return dt.strftime("%d/%m/%Y")
         except Exception:
             pass
-
     for text in text_candidates:
         parsed = normalize_date_string(text)
         if parsed:
             return parsed
-
     return None
 
 
@@ -527,7 +532,6 @@ def normalize_date_string(value: str | None) -> str | None:
     value = clean_text(value)
     if not value:
         return None
-
     for pattern in DATE_PATTERNS:
         match = pattern.search(value)
         if not match:
@@ -559,7 +563,6 @@ def exact_subject_terms(query: str) -> list[str]:
         subjects.extend(["khai sinh", "đăng ký khai sinh"])
     if "kết hôn" in q:
         subjects.extend(["đăng ký kết hôn", "kết hôn"])
-
     ordered: list[str] = []
     seen: set[str] = set()
     for item in subjects:
@@ -588,7 +591,6 @@ def query_focus_terms(query: str) -> list[str]:
             phrase = " ".join(words[i:i + size]).strip()
             if len(phrase) >= 5:
                 phrases.append(phrase)
-
     priority_terms = exact_subject_terms(normalized)
     ordered: list[str] = []
     seen: set[str] = set()
@@ -620,7 +622,6 @@ def extract_focus_content(text: str, query: str, max_chars: int) -> str:
     text = clean_text_preserve_breaks(text)
     if len(text) <= max_chars:
         return text
-
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if lines:
         scored_blocks: list[tuple[float, str]] = []
@@ -631,7 +632,6 @@ def extract_focus_content(text: str, query: str, max_chars: int) -> str:
             score = score_focus_snippet(block, query)
             if score > 0:
                 scored_blocks.append((score, block))
-
         if scored_blocks:
             scored_blocks.sort(key=lambda item: (item[0], len(item[1])), reverse=True)
             chosen: list[str] = []
@@ -653,11 +653,9 @@ def extract_focus_content(text: str, query: str, max_chars: int) -> str:
                     break
             if chosen:
                 return "\n".join(chosen)
-
     plain_text = clean_text(text)
     if len(plain_text) <= max_chars:
         return plain_text
-
     lowered = plain_text.lower()
     windows: list[tuple[int, int]] = []
     subject_terms = exact_subject_terms(query)
@@ -675,16 +673,13 @@ def extract_focus_content(text: str, query: str, max_chars: int) -> str:
                 break
         if len(windows) >= 8:
             break
-
     if not windows:
         return plain_text[:max_chars]
-
     scored: list[tuple[float, int, int]] = []
     for start_pos, end_pos in windows:
         snippet = plain_text[start_pos:end_pos].strip(" ,.;:-")
         if snippet:
             scored.append((score_focus_snippet(snippet, query), start_pos, end_pos))
-
     scored.sort(key=lambda item: (item[0], item[2] - item[1]), reverse=True)
     parts: list[str] = []
     total = 0
@@ -707,7 +702,6 @@ def extract_focus_content(text: str, query: str, max_chars: int) -> str:
         total += len(snippet) + 5
         if len(parts) >= 3:
             break
-
     focused = " ... ".join(parts).strip()
     return focused if focused else plain_text[:max_chars]
 
@@ -718,12 +712,7 @@ def significant_tokens(query: str) -> list[str]:
         "là", "gì", "bao", "nhiêu", "cho", "tôi", "về", "của", "the", "a", "an", "and", "or",
         "như", "nào", "hiện", "nay", "mới", "nhất", "mức", "phí", "giúp", "mình", "xem", "lại",
     }
-    filtered: list[str] = []
-    for token in tokens:
-        if len(token) < 2 or token in stop_words:
-            continue
-        filtered.append(token)
-    return filtered[:10]
+    return [token for token in tokens if len(token) >= 2 and token not in stop_words][:10]
 
 
 def normalize_search_result_url(url: str) -> str:
@@ -736,8 +725,6 @@ def normalize_search_result_url(url: str) -> str:
             return unquote(uddg)
     if url.startswith("//"):
         return f"https:{url}"
-    if url.startswith("/"):
-        return urljoin("https://duckduckgo.com", url)
     return url
 
 
@@ -768,18 +755,16 @@ def is_candidate_url_allowed(url: str, query: str) -> bool:
     return True
 
 
-
-
 def extract_legal_status_excerpt(text: str) -> str:
-    lines = [clean_text(line) for line in (text or '').splitlines() if clean_text(line)]
+    lines = [clean_text(line) for line in (text or "").splitlines() if clean_text(line)]
     matches: list[str] = []
     for line in lines:
         lower = line.lower()
-        if any(token in lower for token in ['hiệu lực', 'tình trạng', 'ngày có hiệu lực', 'còn hiệu lực', 'hết hiệu lực', 'bị thay thế', 'sửa đổi, bổ sung', 'sửa đổi bổ sung']):
+        if any(token in lower for token in ["hiệu lực", "tình trạng", "ngày có hiệu lực", "còn hiệu lực", "hết hiệu lực", "bị thay thế", "sửa đổi, bổ sung", "sửa đổi bổ sung"]):
             matches.append(line)
         if len(matches) >= 2:
             break
-    return ' | '.join(matches)[:320]
+    return " | ".join(matches)[:320]
 
 
 def looks_like_generic_page(url: str, title: str, content: str) -> bool:
@@ -802,33 +787,37 @@ def priority_domains_for_query(query: str) -> list[str]:
     if not _contains_any(query_l, LEGAL_OBJECT_KEYWORDS + LEGAL_FRESHNESS_KEYWORDS + DISPUTE_RECHECK_KEYWORDS):
         return []
     domains = PRIORITY_DOMAINS.copy()
+    if any(token in query_l for token in ["thủ tục", "hồ sơ", "nộp", "đăng ký", "cấp", "dịch vụ công", "trực tuyến", "tạm trú", "căn cước"]):
+        preferred = ["dichvucong.gov.vn", "csdl.dichvucong.gov.vn", "bocongan.gov.vn", "chinhphu.vn", "vbpl.vn", "thuvienphapluat.vn", "luatvietnam.vn"]
+        domains = preferred + [d for d in domains if d not in preferred]
     if any(token in query_l for token in ["bảo hiểm", "bhyt", "bhxh"]):
-        preferred = ["baohiemxahoi.gov.vn", "vbpl.vn", "luatvietnam.vn", "thuvienphapluat.vn", "chinhphu.vn", "dichvucong.gov.vn"]
+        preferred = ["baohiemxahoi.gov.vn", "chinhphu.vn", "vbpl.vn", "luatvietnam.vn", "thuvienphapluat.vn", "dichvucong.gov.vn"]
         domains = preferred + [d for d in domains if d not in preferred]
     return domains
 
 
 def score_domain_reliability(domain: str, query: str, title: str = "") -> float:
     domain = (domain or "").lower()
-    score = 0.45
     if not domain:
-        return score
-
-    if domain.endswith(".gov.vn") or domain.endswith(".gov"):
-        score += 0.38
+        return 0.40
+    gov_domains = ["dichvucong.gov.vn", "bocongan.gov.vn", "chinhphu.vn", "baohiemxahoi.gov.vn", "vbpl.vn"]
+    if any(domain == d or domain.endswith(f".{d}") for d in gov_domains):
+        score = 0.90
+    elif "luatvietnam.vn" in domain:
+        score = 0.75
+    elif "thuvienphapluat.vn" in domain:
+        score = 0.60
+    elif domain.endswith(".gov.vn") or domain.endswith(".gov"):
+        score = 0.82
     elif domain.endswith(".edu.vn") or domain.endswith(".edu"):
-        score += 0.24
-    elif domain.endswith(".org"):
-        score += 0.12
-    elif domain.endswith(".com.vn"):
-        score += 0.08
-
-    if domain in priority_domains_for_query(query):
-        score += 0.28
-    if "thuvienphapluat.vn" in domain and _contains_any(query.lower(), ["luật", "nghị định", "thông tư", "cư trú", "tạm trú", "thường trú", "xử phạt", "lệ phí"]):
-        score += 0.16
+        score = 0.55
+    else:
+        score = 0.40
+    priorities = priority_domains_for_query(query)
+    if domain in priorities:
+        score += max(0.0, 0.08 - priorities.index(domain) * 0.01)
     if any(token in title.lower() for token in ["chính thức", "official"]):
-        score += 0.08
+        score += 0.04
     return min(score, 0.98)
 
 

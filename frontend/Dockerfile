@@ -23,4 +23,15 @@ ENV BACKEND_HOST=backend
 ENV BACKEND_PORT=8000
 
 EXPOSE 80
-CMD ["/bin/sh", "-c", "envsubst '$$BACKEND_HOST $$BACKEND_PORT' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+
+# Chờ backend DNS sẵn sàng trước khi start nginx
+# Render: fromService trả về internal hostname (vd: chatbot-backend-xxxx)
+# nginx sẽ crash nếu resolve DNS thất bại ngay lúc khởi động
+CMD ["/bin/sh", "-c", \
+  "echo 'Waiting for backend DNS: '$BACKEND_HOST && \
+  until nslookup \"$BACKEND_HOST\" >/dev/null 2>&1; do \
+    echo 'Backend DNS not ready, retrying in 5s...'; sleep 5; \
+  done && \
+  echo 'Backend DNS resolved. Starting nginx...' && \
+  envsubst '$$BACKEND_HOST $$BACKEND_PORT' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && \
+  nginx -g 'daemon off;'"]

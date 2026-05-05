@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
+# Script khởi động Celery worker + health server (dùng cho Render Free plan)
+COPY worker_start.sh ./worker_start.sh
+RUN chmod +x ./worker_start.sh
+
 RUN mkdir -p /app/uploads
 
 ENV PYTHONPATH=/app

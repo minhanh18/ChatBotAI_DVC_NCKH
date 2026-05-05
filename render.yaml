@@ -5,6 +5,7 @@ services:
     plan: free
     ipAllowList: []
 
+  # ── Backend (Web Service — Free plan không hỗ trợ pserv) ──────────────────
   - type: web
     name: chatbot-backend
     runtime: docker
@@ -12,24 +13,20 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
-      # ── API Keys (PHẢI nhập thủ công trên Render Dashboard) ──
       - key: GEMINI_API_KEY
-        sync: false          # Bắt buộc — Google AI Studio
+        sync: false
       - key: GEMINI_API_KEYS
-        sync: false          # Tuỳ chọn — nhiều key cách nhau bằng dấu phẩy
+        sync: false
       - key: TAVILY_API_KEY
-        sync: false          # Bắt buộc nếu bật web search
-      # ── Bảo mật ──────────────────────────────────────────────
+        sync: false
       - key: SECRET_KEY
-        generateValue: true  # Render tự sinh
+        generateValue: true
       - key: SESSION_HMAC_KEY
-        generateValue: true  # Render tự sinh — mã hoá session_key trong DB
-      # ── Admin ────────────────────────────────────────────────
+        generateValue: true
       - key: ADMIN_USERNAME
         value: admin
       - key: ADMIN_PASSWORD
-        sync: false          # Nhập thủ công — đặt mật khẩu mạnh
-      # ── Database & Cache ─────────────────────────────────────
+        sync: false
       - key: DATABASE_URL_RAW
         fromDatabase:
           name: chatbot-db
@@ -39,7 +36,6 @@ services:
           name: chatbot-redis
           type: keyvalue
           property: connectionString
-      # ── App config ───────────────────────────────────────────
       - key: PORT
         value: "8000"
       - key: UVICORN_WORKERS
@@ -59,7 +55,7 @@ services:
       - key: RETRIEVAL_SCORE_THRESHOLD
         value: "0.30"
       - key: CORS_ORIGINS
-        value: '["https://chatbot-frontend.onrender.com"]'
+        value: '["https://chatbot-frontend-oymx.onrender.com"]'
 
   # ── Frontend ───────────────────────────────────────────────────────────────
   - type: web
@@ -69,7 +65,6 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
-      # type: web (không phải pserv) — cập nhật theo backend ở trên
       - key: BACKEND_HOST
         fromService:
           name: chatbot-backend
@@ -82,24 +77,14 @@ services:
           property: port
 
   # ── Celery Worker (Web Service — Free plan không hỗ trợ type: worker) ──────
-  # Trick: chạy mini HTTP health server (Python built-in) song song với Celery
-  # Render yêu cầu web service phải trả lời health check trên $PORT
+  # worker_start.sh: chạy python -m http.server để pass health check + celery
   - type: web
     name: chatbot-worker
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: free
-    dockerCommand: >-
-      sh -c "python -c \"
-      import http.server, os, socketserver, threading;
-      class H(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-          self.send_response(200);self.end_headers();self.wfile.write(b'ok')
-        def log_message(self, *a): pass
-      t = threading.Thread(target=lambda: socketserver.TCPServer(('', int(os.environ.get('PORT', 10000))), H).serve_forever(), daemon=True);
-      t.start()
-      \" && celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=2 -Q celery"
+    dockerCommand: sh /app/worker_start.sh
     envVars:
       - key: GEMINI_API_KEY
         sync: false
@@ -108,9 +93,9 @@ services:
       - key: TAVILY_API_KEY
         sync: false
       - key: SECRET_KEY
-        sync: false          # Copy từ chatbot-backend sau khi deploy
+        sync: false
       - key: SESSION_HMAC_KEY
-        sync: false          # Copy từ chatbot-backend sau khi deploy
+        sync: false
       - key: DATABASE_URL_RAW
         fromDatabase:
           name: chatbot-db

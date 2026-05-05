@@ -66,15 +66,9 @@ services:
     plan: free
     envVars:
       - key: BACKEND_HOST
-        fromService:
-          name: chatbot-backend
-          type: web
-          property: host
+        value: "chatbot-backend-qhsy.onrender.com"
       - key: BACKEND_PORT
-        fromService:
-          name: chatbot-backend
-          type: web
-          property: port
+        value: "443"
 
   # ── Celery Worker (Web Service — Free plan không hỗ trợ type: worker) ──────
   # worker_start.sh: chạy python -m http.server để pass health check + celery

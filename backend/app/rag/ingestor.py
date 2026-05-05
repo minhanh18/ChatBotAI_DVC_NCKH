@@ -103,7 +103,11 @@ async def ingest_document(document_id: str) -> None:
             logger.error("  ✗ Lỗi index %s: %s", document_id, e)
         except Exception as e:
             if _is_rate_limited_error(e):
-                await _set_status(db, doc, "pending", "Hệ thống embedding đang bận, sẽ tự thử lại.")
+                # Giữ nguyên trạng thái "indexing" thay vì về "pending"
+                # để UI hiển thị đúng (đang xử lý, chờ retry) chứ không treo pending.
+                # Celery task sẽ tự retry với backoff, ingestor sẽ set lại "indexing" ở lần sau.
+                doc.error_message = "Embedding đang bận, đang chờ retry tự động…"
+                await db.commit()
                 logger.warning("  ↻ Embedding bị giới hạn tần suất cho %s, sẽ retry: %s", document_id, e)
                 raise
             await _set_status(db, doc, "error", f"Lỗi không xác định: {e}")

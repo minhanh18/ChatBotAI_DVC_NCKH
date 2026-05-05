@@ -27,29 +27,67 @@ celery_app.conf.update(
 )
 
 
+def _run_async(coro):
+    """
+    Chạy coroutine an toàn trong môi trường Celery worker.
+
+    asyncio.run() sẽ raise RuntimeError nếu đã có event loop đang chạy
+    (ví dụ khi dùng gevent/eventlet pool hoặc một số môi trường đặc biệt).
+    Hàm này xử lý cả hai trường hợp:
+      - Không có event loop → tạo mới và chạy (asyncio.run thông thường)
+      - Đã có event loop → chạy trong thread riêng biệt để tránh xung đột
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Event loop đang chạy (gevent/eventlet/nested) → chạy trong thread mới
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result()
+        else:
+            return loop.run_until_complete(coro)
+    except RuntimeError:
+        # Không có event loop trong thread này → tạo mới
+        return asyncio.run(coro)
+
+
 @celery_app.task(bind=True, max_retries=8, default_retry_delay=15)
 def ingest_document_task(self, document_id: str):
     """Task index tài liệu — chạy trong Celery worker."""
     try:
         from app.rag.ingestor import ingest_document
-        asyncio.run(ingest_document(document_id))
+        _run_async(ingest_document(document_id))
         logger.info("Task ingest xong: %s", document_id)
     except Exception as exc:
-        countdown = min(300, 15 * (2 ** self.request.retries))
-        logger.warning("Task ingest sẽ retry: %s — %s (sau %ss)", document_id, exc, countdown)
-        try:
-            raise self.retry(exc=exc, countdown=countdown)
-        except self.MaxRetriesExceededError:
-            # Hết lần retry → đánh dấu document là error
-            _mark_document_failed(document_id, f"Đã thử {self.max_retries} lần nhưng không thành công: {exc}")
-            logger.error("Task ingest hết retry cho %s: %s", document_id, exc)
+        # Nếu là lỗi rate-limit → retry với backoff, KHÔNG đánh dấu error ngay
+        from app.rag.embedder import _is_rate_limited_error
+        if _is_rate_limited_error(exc):
+            countdown = min(300, 15 * (2 ** self.request.retries))
+            logger.warning(
+                "Task ingest bị rate-limit, retry sau %ss: %s — %s",
+                countdown, document_id, exc,
+            )
+            try:
+                raise self.retry(exc=exc, countdown=countdown)
+            except self.MaxRetriesExceededError:
+                _mark_document_failed(
+                    document_id,
+                    f"Embedding bị giới hạn tần suất sau {self.max_retries} lần thử: {exc}",
+                )
+                logger.error("Task ingest hết retry (rate-limit) cho %s: %s", document_id, exc)
+            return
+
+        # Các lỗi khác (kể cả RuntimeError từ asyncio, lỗi DB, …)
+        # → đánh dấu error ngay, KHÔNG retry vô ích để tránh treo pending
+        logger.error("Task ingest thất bại (không retry): %s — %s", document_id, exc, exc_info=True)
+        _mark_document_failed(document_id, f"Lỗi xử lý: {exc}")
 
 
 def _mark_document_failed(document_id: str, message: str) -> None:
-    """Đánh dấu document là error khi ingest task hết retry."""
+    """Đánh dấu document là error. Dùng _run_async để tránh xung đột event loop."""
     try:
-        from app.rag.ingestor import AsyncSessionLocal
-        from app.models.db import Document
+        from app.models.db import AsyncSessionLocal, Document
         from sqlalchemy import select
         from uuid import UUID
 
@@ -62,6 +100,6 @@ def _mark_document_failed(document_id: str, message: str) -> None:
                     doc.error_message = message[:500]
                     await db.commit()
 
-        asyncio.run(_set_failed())
+        _run_async(_set_failed())
     except Exception as e:
         logger.error("Không thể đánh dấu document failed: %s — %s", document_id, e)

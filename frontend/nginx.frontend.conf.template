@@ -21,39 +21,19 @@ server {
         expires 1h;
     }
 
-    location = /assistant {
-        try_files /app/index.html =404;
-    }
-
-    location = /assistant/ {
-        try_files /app/index.html =404;
-    }
-
-    location = /admin {
-        try_files /app/index.html =404;
-    }
-
-    location = /admin/ {
-        try_files /app/index.html =404;
-    }
-
-    location = /app {
-        try_files /app/index.html =404;
-    }
-
-    location = /app/ {
-        try_files /app/index.html =404;
-    }
-
-    location ^~ /app/ {
-        try_files $uri /app/index.html;
-    }
+    location = /assistant { try_files /app/index.html =404; }
+    location = /assistant/ { try_files /app/index.html =404; }
+    location = /admin { try_files /app/index.html =404; }
+    location = /admin/ { try_files /app/index.html =404; }
+    location = /app { try_files /app/index.html =404; }
+    location = /app/ { try_files /app/index.html =404; }
+    location ^~ /app/ { try_files $uri /app/index.html; }
 
     location /api/ {
-        # Dùng resolver + set $backend để nginx resolve DNS per-request (lazy),
-        # không resolve lúc startup → tránh crash khi backend chưa sẵn sàng
-        resolver 8.8.8.8 valid=30s ipv6=off;
-        set $backend http://${BACKEND_HOST}:${BACKEND_PORT};
+        # RESOLVER được inject từ /etc/resolv.conf lúc container start
+        # → resolve được cả internal hostname của Render lẫn public domain
+        resolver RESOLVER_PLACEHOLDER valid=10s ipv6=off;
+        set $backend http://BACKEND_HOST_PLACEHOLDER:BACKEND_PORT_PLACEHOLDER;
 
         proxy_pass $backend;
         proxy_http_version 1.1;

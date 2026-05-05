@@ -17,17 +17,20 @@ COPY assets /usr/share/nginx/html/static/assets
 COPY chatbot-inline.js /usr/share/nginx/html/static/chatbot-inline.js
 COPY --from=builder /app/dist/assets /usr/share/nginx/html/app/assets
 COPY --from=builder /app/dist/app.html /usr/share/nginx/html/app/index.html
-COPY nginx.frontend.conf.template /etc/nginx/templates/default.conf.template
+COPY nginx.frontend.conf.template /etc/nginx/nginx.template
 
 ENV BACKEND_HOST=backend
 ENV BACKEND_PORT=8000
 
 EXPOSE 80
 
-# envsubst điền BACKEND_HOST/PORT vào nginx config rồi start nginx
-# Không cần chờ DNS — nginx resolve per-request nhờ resolver trong template
 CMD ["/bin/sh", "-c", \
-  "envsubst '$$BACKEND_HOST $$BACKEND_PORT' \
-   < /etc/nginx/templates/default.conf.template \
-   > /etc/nginx/conf.d/default.conf \
-   && nginx -g 'daemon off;'"]
+  "RESOLVER=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf) && \
+   echo \"Using DNS resolver: $RESOLVER\" && \
+   sed \
+     -e \"s|RESOLVER_PLACEHOLDER|${RESOLVER}|g\" \
+     -e \"s|BACKEND_HOST_PLACEHOLDER|${BACKEND_HOST}|g\" \
+     -e \"s|BACKEND_PORT_PLACEHOLDER|${BACKEND_PORT}|g\" \
+     /etc/nginx/nginx.template > /etc/nginx/conf.d/default.conf && \
+   echo 'Nginx config written. Starting...' && \
+   nginx -g 'daemon off;'"]

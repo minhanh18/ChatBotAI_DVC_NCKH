@@ -1,28 +1,12 @@
 services:
+  # ── Redis ──────────────────────────────────────────────────────────────────
   - type: keyvalue
     name: chatbot-redis
     plan: free
     ipAllowList: []
 
+  # ── Backend (Web Service — thay pserv vì Free plan không hỗ trợ pserv) ────
   - type: web
-    name: chatbot-frontend
-    runtime: docker
-    rootDir: frontend
-    dockerfilePath: ./Dockerfile
-    plan: free
-    envVars:
-      - key: BACKEND_HOST
-        fromService:
-          name: chatbot-backend
-          type: pserv
-          property: host
-      - key: BACKEND_PORT
-        fromService:
-          name: chatbot-backend
-          type: pserv
-          property: port
-
-  - type: pserv
     name: chatbot-backend
     runtime: docker
     rootDir: backend
@@ -78,13 +62,45 @@ services:
       - key: CORS_ORIGINS
         value: '["https://chatbot-frontend.onrender.com"]'
 
-  - type: worker
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  - type: web
+    name: chatbot-frontend
+    runtime: docker
+    rootDir: frontend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      # type: web (không phải pserv) — cập nhật theo backend ở trên
+      - key: BACKEND_HOST
+        fromService:
+          name: chatbot-backend
+          type: web
+          property: host
+      - key: BACKEND_PORT
+        fromService:
+          name: chatbot-backend
+          type: web
+          property: port
+
+  # ── Celery Worker (Web Service — Free plan không hỗ trợ type: worker) ──────
+  # Trick: chạy mini HTTP health server (Python built-in) song song với Celery
+  # Render yêu cầu web service phải trả lời health check trên $PORT
+  - type: web
     name: chatbot-worker
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: free
-    dockerCommand: celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=2 -Q celery
+    dockerCommand: >-
+      sh -c "python -c \"
+      import http.server, os, socketserver, threading;
+      class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+          self.send_response(200);self.end_headers();self.wfile.write(b'ok')
+        def log_message(self, *a): pass
+      t = threading.Thread(target=lambda: socketserver.TCPServer(('', int(os.environ.get('PORT', 10000))), H).serve_forever(), daemon=True);
+      t.start()
+      \" && celery -A app.tasks.ingest.celery_app worker --loglevel=info --concurrency=2 -Q celery"
     envVars:
       - key: GEMINI_API_KEY
         sync: false
@@ -93,9 +109,9 @@ services:
       - key: TAVILY_API_KEY
         sync: false
       - key: SECRET_KEY
-        sync: false
+        sync: false          # Copy từ chatbot-backend sau khi deploy
       - key: SESSION_HMAC_KEY
-        sync: false
+        sync: false          # Copy từ chatbot-backend sau khi deploy
       - key: DATABASE_URL_RAW
         fromDatabase:
           name: chatbot-db
@@ -125,4 +141,3 @@ databases:
     plan: free
     databaseName: chatbot
     user: chatbot
-

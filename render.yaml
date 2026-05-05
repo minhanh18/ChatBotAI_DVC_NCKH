@@ -69,6 +69,8 @@ services:
         value: "chatbot-backend-qhsy.onrender.com"
       - key: BACKEND_PORT
         value: "443"
+      - key: PORT
+        value: "80"
 
   # ── Celery Worker (Web Service — Free plan không hỗ trợ type: worker) ──────
   # worker_start.sh: chạy python -m http.server để pass health check + celery

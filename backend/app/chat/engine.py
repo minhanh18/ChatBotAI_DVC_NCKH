@@ -89,7 +89,9 @@ class _GeminiKeyPool:
         return self._keys[self._current] if self._keys else ""
 
     def get_available_key(self) -> str:
-        """Trả về key khả dụng đầu tiên (không cooling). Block nếu cần."""
+        """Trả về key khả dụng đầu tiên (không cooling). Block nếu cần.
+        Dùng trong thread context (ví dụ _worker thread). KHÔNG gọi từ async event loop.
+        """
         with self._lock:
             now = time.time()
             for _ in range(len(self._keys)):
@@ -106,6 +108,34 @@ class _GeminiKeyPool:
 
         if wait > 0:
             time.sleep(min(wait, 30))
+
+        with self._lock:
+            try:
+                self._current = self._keys.index(earliest_key)
+            except ValueError:
+                pass
+            genai.configure(api_key=earliest_key)
+            return earliest_key
+
+    async def get_available_key_async(self) -> str:
+        """Async-safe version: không block event loop khi tất cả keys đang cooling.
+        Dùng khi gọi từ async context (ví dụ asyncio.create_task).
+        """
+        with self._lock:
+            now = time.time()
+            for _ in range(len(self._keys)):
+                key = self._keys[self._current]
+                if now >= self._cooldowns.get(key, 0):
+                    genai.configure(api_key=key)
+                    return key
+                self._current = (self._current + 1) % len(self._keys)
+
+            earliest_key = min(self._keys, key=lambda k: self._cooldowns.get(k, 0))
+            wait = max(0.0, self._cooldowns.get(earliest_key, 0) - now)
+            logger.warning("Tất cả Gemini keys đang cooling (async), đợi %.1fs", wait)
+
+        if wait > 0:
+            await asyncio.sleep(min(wait, 30))
 
         with self._lock:
             try:
@@ -1498,8 +1528,22 @@ class ChatEngine:
         )
 
     def _make_model(self) -> genai.GenerativeModel:
-        """Tạo model mới với key khả dụng (không cooling)."""
+        """Tạo model mới với key khả dụng (không cooling).
+        Chỉ dùng trong thread context (ví dụ _worker thread).
+        """
         key = _key_pool.get_available_key()
+        if key:
+            genai.configure(api_key=key)
+        return genai.GenerativeModel(
+            settings.GEMINI_MODEL,
+            generation_config=self._gen_config,
+        )
+
+    async def _make_model_async(self) -> genai.GenerativeModel:
+        """Async-safe version: không block event loop khi keys đang cooling.
+        Dùng khi gọi từ async context.
+        """
+        key = await _key_pool.get_available_key_async()
         if key:
             genai.configure(api_key=key)
         return genai.GenerativeModel(
@@ -1749,15 +1793,16 @@ class ChatEngine:
                     for m in history[-SUMMARY_EVERY_N_TURNS * 2:]
                     if m.role == "user"
                 ]
-                asyncio.create_task(
-                    maybe_update_summary(
+                async def _update_summary_task():
+                    gemini_model = await self._make_model_async()
+                    await maybe_update_summary(
                         session_key=session_key,
                         query=query,
                         answer=full_text,
                         history_pairs=history_pairs,
-                        gemini_model=self._make_model(),
+                        gemini_model=gemini_model,
                     )
-                )
+                asyncio.create_task(_update_summary_task())
 
             # ── Legal enrichment: trích link DVC + căn cứ pháp lý ──────────
             if not is_greeting and response_mode in (AnswerMode.RAG, AnswerMode.AI):

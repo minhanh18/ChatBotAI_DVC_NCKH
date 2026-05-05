@@ -30,14 +30,19 @@ server {
     location ^~ /app/ { try_files $uri /app/index.html; }
 
     location /api/ {
-        # RESOLVER được inject từ /etc/resolv.conf lúc container start
-        # → resolve được cả internal hostname của Render lẫn public domain
-        resolver RESOLVER_PLACEHOLDER valid=10s ipv6=off;
-        set $backend http://BACKEND_HOST_PLACEHOLDER:BACKEND_PORT_PLACEHOLDER;
-
+        # 1. Cố định dùng DNS của Google để phân giải link Public (khắc phục lỗi host not found)
+        resolver 8.8.8.8 valid=10s ipv6=off;
+        
+        # 2. Gọi qua đường HTTPS (bỏ PORT đi vì link public luôn chạy port chuẩn của web)
+        set $backend https://BACKEND_HOST_PLACEHOLDER;
+        
         proxy_pass $backend;
+        
+        # 3. Hai dòng này cực kỳ quan trọng để lách qua tường lửa bảo mật của Render
+        proxy_set_header Host BACKEND_HOST_PLACEHOLDER;
+        proxy_ssl_server_name on;
+
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

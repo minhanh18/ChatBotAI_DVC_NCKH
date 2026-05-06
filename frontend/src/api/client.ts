@@ -106,7 +106,20 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const contentType = res.headers.get('content-type') || '';
   if (!res.ok) {
     const body = await res.text();
-    const err: any = new Error(body || `HTTP ${res.status}`);
+    // Nếu body là HTML (lỗi 502/504 từ nginx/proxy), không render raw HTML
+    const isHtml = body.trimStart().startsWith('<') || contentType.includes('text/html');
+    let message: string;
+    if (isHtml) {
+      message = `Lỗi máy chủ (HTTP ${res.status}). Backend đang khởi động hoặc tạm ngừng hoạt động.`;
+    } else {
+      try {
+        const parsed = JSON.parse(body);
+        message = parsed.detail || parsed.message || body || `HTTP ${res.status}`;
+      } catch {
+        message = body || `HTTP ${res.status}`;
+      }
+    }
+    const err: any = new Error(message);
     err.status = res.status;
     throw err;
   }

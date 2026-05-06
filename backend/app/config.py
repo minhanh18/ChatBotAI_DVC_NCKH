@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 100
     MAX_CHAT_IMAGE_SIZE_MB: int = 10
     ALLOWED_EXTENSIONS: list[str] = ["pdf", "txt", "md", "docx", "csv", "html"]
-    UPLOAD_DIR: str = "/app/uploads"
+    UPLOAD_DIR: str = "/tmp/uploads"
     APP_TIMEZONE: str = "Asia/Ho_Chi_Minh"
 
     # ── Live web search / crawl ───────────────────────────

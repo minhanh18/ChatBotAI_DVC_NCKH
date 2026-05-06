@@ -14,9 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY worker_start.sh ./worker_start.sh
 RUN chmod +x ./worker_start.sh
-# cache-bust: force rebuild v3.8.2
+# cache-bust: force rebuild v3.9.1
 
-RUN mkdir -p /app/uploads
+RUN mkdir -p /tmp/uploads
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1

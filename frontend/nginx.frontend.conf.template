@@ -5,44 +5,28 @@ server {
     index index.html;
     client_max_body_size 120m;
 
-    location = / {
-        try_files /index.html =404;
-    }
-
-    location ^~ /static/ {
-        try_files $uri =404;
-        access_log off;
-        expires 1h;
-    }
-
-    location ^~ /app/assets/ {
-        try_files $uri =404;
-        access_log off;
-        expires 1h;
-    }
-
-    location = /assistant { try_files /app/index.html =404; }
+    location = / { try_files /index.html =404; }
+    location ^~ /static/ { try_files $uri =404; access_log off; expires 1h; }
+    location ^~ /app/assets/ { try_files $uri =404; access_log off; expires 1h; }
+    location = /assistant  { try_files /app/index.html =404; }
     location = /assistant/ { try_files /app/index.html =404; }
-    location = /admin { try_files /app/index.html =404; }
-    location = /admin/ { try_files /app/index.html =404; }
-    location = /app { try_files /app/index.html =404; }
-    location = /app/ { try_files /app/index.html =404; }
-    location ^~ /app/ { try_files $uri /app/index.html; }
+    location = /admin      { try_files /app/index.html =404; }
+    location = /admin/     { try_files /app/index.html =404; }
+    location = /app        { try_files /app/index.html =404; }
+    location = /app/       { try_files /app/index.html =404; }
+    location ^~ /app/      { try_files $uri /app/index.html; }
 
     location /api/ {
-        # 1. Cố định dùng DNS của Google để phân giải link Public (khắc phục lỗi host not found)
-        resolver 8.8.8.8 valid=10s ipv6=off;
-        
-        # 2. Gọi qua đường HTTPS (bỏ PORT đi vì link public luôn chạy port chuẩn của web)
-        set $backend https://BACKEND_HOST_PLACEHOLDER;
-        
-        proxy_pass $backend;
-        
-        # 3. Hai dòng này cực kỳ quan trọng để lách qua tường lửa bảo mật của Render
-        proxy_set_header Host BACKEND_HOST_PLACEHOLDER;
-        proxy_ssl_server_name on;
+        # Render web service không có internal DNS.
+        # BACKEND_URL = https://chatbot-backend-qhsy.onrender.com (full public URL)
+        # 8.8.8.8 resolve được *.onrender.com, valid=30s tránh cache stale
+        resolver 8.8.8.8 valid=30s ipv6=off;
+        set $backend_url BACKEND_URL_PLACEHOLDER;
 
+        proxy_pass $backend_url;
+        proxy_ssl_server_name on;
         proxy_http_version 1.1;
+        proxy_set_header Host BACKEND_HOST_PLACEHOLDER;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

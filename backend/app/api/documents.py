@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +27,7 @@ from app.rag.lifecycle import (
     version_of,
 )
 from app.rag.source_hints import resolve_document_source_url
-from app.tasks.ingest import ingest_document_task
+from app.rag.ingestor import ingest_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -75,6 +75,7 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db), _=
 @router.post("/datasets/{dataset_id}/upload")
 async def upload_document(
     dataset_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_admin),
@@ -152,7 +153,7 @@ async def upload_document(
         previous_doc.meta = prev_meta
 
     await db.commit()
-    ingest_document_task.delay(doc_id)
+    background_tasks.add_task(ingest_document, doc_id)
 
     return {
         "id": doc_id,
@@ -331,7 +332,7 @@ async def serve_document_file(
 
 
 @router.post("/{document_id}/reindex")
-async def reindex_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+async def reindex_document(document_id: str, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document không tồn tại")
@@ -341,7 +342,7 @@ async def reindex_document(document_id: str, db: AsyncSession = Depends(get_db),
     doc.meta = merge_meta(doc.meta, {"last_reindex_requested_at": datetime.utcnow().isoformat()})
     await db.commit()
 
-    ingest_document_task.delay(document_id)
+    background_tasks.add_task(ingest_document, document_id)
     return {"message": "Đã bắt đầu re-index có kiểm soát."}
 
 

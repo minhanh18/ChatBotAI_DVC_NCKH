@@ -5,7 +5,7 @@ services:
     plan: free
     ipAllowList: []
 
-  # ── Backend (Web Service — Free plan không hỗ trợ pserv) ──────────────────
+  # ── Backend ────────────────────────────────────────────────────────────────
   - type: web
     name: chatbot-backend
     runtime: docker
@@ -39,7 +39,7 @@ services:
       - key: PORT
         value: "8000"
       - key: UVICORN_WORKERS
-        value: "2"
+        value: "1"
       - key: DEBUG
         value: "false"
       - key: ENABLE_WEB_SEARCH
@@ -54,8 +54,6 @@ services:
         value: "5"
       - key: RETRIEVAL_SCORE_THRESHOLD
         value: "0.30"
-      - key: CORS_ORIGINS
-        value: '["https://chatbot-frontend-oymx.onrender.com"]'
 
   # ── Frontend ───────────────────────────────────────────────────────────────
   - type: web
@@ -65,15 +63,14 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
+      # property: host → trả về full domain: chatbot-backend-qhsy.onrender.com
       - key: BACKEND_HOST
-        value: "chatbot-backend-qhsy.onrender.com"
-      - key: BACKEND_PORT
-        value: "443"
-      - key: PORT
-        value: "80"
+        fromService:
+          name: chatbot-backend
+          type: web
+          property: host
 
-  # ── Celery Worker (Web Service — Free plan không hỗ trợ type: worker) ──────
-  # worker_start.sh: chạy python -m http.server để pass health check + celery
+  # ── Worker (giữ lại nhưng chỉ cần health check, ingest đã chuyển sang backend) ──
   - type: web
     name: chatbot-worker
     runtime: docker
@@ -82,16 +79,6 @@ services:
     plan: free
     dockerCommand: sh /app/worker_start.sh
     envVars:
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GEMINI_API_KEYS
-        sync: false
-      - key: TAVILY_API_KEY
-        sync: false
-      - key: SECRET_KEY
-        sync: false
-      - key: SESSION_HMAC_KEY
-        sync: false
       - key: DATABASE_URL_RAW
         fromDatabase:
           name: chatbot-db
@@ -101,20 +88,6 @@ services:
           name: chatbot-redis
           type: keyvalue
           property: connectionString
-      - key: DEBUG
-        value: "false"
-      - key: ENABLE_WEB_SEARCH
-        value: "true"
-      - key: GEMINI_MAX_OUTPUT_TOKENS
-        value: "8192"
-      - key: CHUNK_SIZE
-        value: "800"
-      - key: CHUNK_OVERLAP
-        value: "120"
-      - key: RETRIEVAL_TOP_K
-        value: "5"
-      - key: RETRIEVAL_SCORE_THRESHOLD
-        value: "0.30"
 
 databases:
   - name: chatbot-db

@@ -19,18 +19,18 @@ COPY --from=builder /app/dist/assets /usr/share/nginx/html/app/assets
 COPY --from=builder /app/dist/app.html /usr/share/nginx/html/app/index.html
 COPY nginx.frontend.conf.template /etc/nginx/nginx.template
 
-ENV BACKEND_HOST=backend
-ENV BACKEND_PORT=8000
+# BACKEND_HOST = full domain của backend (vd: chatbot-backend-qhsy.onrender.com)
+# Được inject từ render.yaml qua fromService property: host
+ENV BACKEND_HOST=chatbot-backend-qhsy.onrender.com
 
 EXPOSE 80
 
 CMD ["/bin/sh", "-c", \
-  "RESOLVER=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf) && \
-   echo \"Using DNS resolver: $RESOLVER\" && \
+  "BACKEND_URL=https://${BACKEND_HOST} && \
+   echo \"==> Backend URL: ${BACKEND_URL}\" && \
    sed \
-     -e \"s|RESOLVER_PLACEHOLDER|${RESOLVER}|g\" \
+     -e \"s|BACKEND_URL_PLACEHOLDER|${BACKEND_URL}|g\" \
      -e \"s|BACKEND_HOST_PLACEHOLDER|${BACKEND_HOST}|g\" \
-     -e \"s|BACKEND_PORT_PLACEHOLDER|${BACKEND_PORT}|g\" \
      /etc/nginx/nginx.template > /etc/nginx/conf.d/default.conf && \
-   echo 'Nginx config written. Starting...' && \
+   cat /etc/nginx/conf.d/default.conf | grep backend && \
    nginx -g 'daemon off;'"]

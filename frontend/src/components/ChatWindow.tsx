@@ -309,8 +309,6 @@ export function ChatWindow({
     window.addEventListener('chatbot:monitoring-reset', handler);
     return () => window.removeEventListener('chatbot:monitoring-reset', handler);
   }, [newConversation]);
-
-  const selectConversation = useCallback(
     (convId: string) => {
       abortRef.current?.abort();
       setStream(STREAM_IDLE);
@@ -346,6 +344,13 @@ export function ChatWindow({
     autoScrolledForCurrentReplyRef.current = false;
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
+
+  // Lắng nghe sự kiện reset giám sát từ AdminDashboard để xóa trạng thái chat
+  useEffect(() => {
+    const handler = () => { newConversation(); };
+    window.addEventListener('chatbot:monitoring-reset', handler);
+    return () => window.removeEventListener('chatbot:monitoring-reset', handler);
+  }, [newConversation]);
 
   const handleDeleteConv = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();

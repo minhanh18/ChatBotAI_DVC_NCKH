@@ -454,9 +454,14 @@ def _resolve_effective_query(query: str, history: list[Message]) -> str:
     if _is_self_contained_query(clean_query) or not _is_context_light_query(clean_query):
         return clean_query
 
-    topics = _collect_conversation_topics(history)
-    if len(topics) == 1:
-        return f"Chủ đề hiện tại: {topics[0]}. Câu hỏi: {clean_query}"
+    # Ưu tiên chủ đề từ câu hỏi hiện tại trước khi xem lịch sử
+    current_topics = _extract_topics(clean_query)
+    if current_topics:
+        return f"Chủ đề hiện tại: {current_topics[0]}. Câu hỏi: {clean_query}"
+
+    history_topics = _collect_conversation_topics(history)
+    if len(history_topics) == 1:
+        return f"Chủ đề hiện tại: {history_topics[0]}. Câu hỏi: {clean_query}"
 
     # Không rõ chủ đề hoặc nhiều chủ đề: giữ nguyên để hệ thống hỏi làm rõ/không kéo nhiễu.
     return clean_query

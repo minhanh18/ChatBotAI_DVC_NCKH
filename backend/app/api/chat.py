@@ -18,6 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.router import AnswerMode, RouteDecision, agent_router
+from app.rag.query_rewriter import rewrite_query
 from app.chat.engine import chat_engine
 from app.chat.evaluator import is_greeting_query, is_out_of_domain, out_of_domain_reply
 from app.config import settings
@@ -123,6 +124,9 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         return _streaming_response(event_stream)
 
     effective_query = _resolve_effective_query(req.query, history)
+    # Chuẩn hóa query: không dấu, viết tắt, sai chính tả → tiếng Việt chuẩn
+    # Fail-safe: nếu lỗi/timeout thì vẫn dùng query gốc
+    effective_query = await rewrite_query(effective_query)
 
     requested_mode = AnswerMode(req.mode) if req.mode in ("rag", "ai") else None
     force_web = await _should_auto_force_web(db, conversation.id, req.query)

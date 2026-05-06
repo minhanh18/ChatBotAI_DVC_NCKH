@@ -14,14 +14,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY worker_start.sh ./worker_start.sh
 RUN chmod +x ./worker_start.sh
-# cache-bust: force rebuild v3.9.1
+# cache-bust: force rebuild v3.9.3
 
 RUN mkdir -p /tmp/uploads
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
-ENV UVICORN_WORKERS=2
+ENV UVICORN_WORKERS=1
 
 EXPOSE 8000
 

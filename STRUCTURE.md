@@ -113,13 +113,17 @@ chatbot_dvc/
         │                         # - TTL 2h, GC tự động
         │
         ├── rag/
+        │   ├── query_rewriter.py # Chuẩn hóa query trước RAG (LLM-based):
+        │   │                     # - rewrite_query(): không dấu/viết tắt/sai chính tả → chuẩn
+        │   │                     # - _needs_rewrite(): bỏ qua nếu query đã đủ dấu (tiết kiệm API)
+        │   │                     # - in-process cache 512 entries, timeout 3s, fail-safe
         │   ├── retriever.py      # HybridRetriever v3:
         │   │                     # - vector search (pgvector cosine)
         │   │                     # - lexical search (PostgreSQL tsvector)
         │   │                     # - BM25 reranking + RRF merge
         │   ├── embedder.py       # Gemini embedding:
         │   │                     # - embed_query/embed_chunks()
-        │   │                     # - fallback tự động sang gemini-embedding-001
+        │   │                     # - model: gemini-embedding-001 (default)
         │   ├── chunker.py        # Chia tài liệu thành chunks:
         │   │                     # - kích thước ~800 chars, overlap 120
         │   │                     # - smart split tại ranh giới câu/đoạn
@@ -127,6 +131,7 @@ chatbot_dvc/
         │   │                     # - metadata extraction (số trang, tiêu đề)
         │   ├── ingestor.py       # Orchestrate toàn bộ pipeline index:
         │   │                     # extract → chunk → embed → store
+        │   │                     # chạy trong thread riêng, không block event loop
         │   ├── lifecycle.py      # Quản lý vòng đời tài liệu:
         │   │                     # - delete chunks, update status
         │   ├── legal_metadata.py # Trích metadata pháp lý từ text:

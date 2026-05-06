@@ -5,6 +5,7 @@ Ingestor — pipeline đầy đủ: extract → chunk → embed → lưu DB.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from uuid import UUID
 
@@ -39,7 +40,8 @@ async def ingest_document(document_id: str) -> None:
         logger.info("Bắt đầu index document: %s (%s)", doc.name, document_id)
 
         try:
-            raw_text = extract_text(doc.file_path)
+            loop = asyncio.get_event_loop()
+            raw_text = await loop.run_in_executor(None, extract_text, doc.file_path)
             if not raw_text.strip():
                 raise ValueError("File không có nội dung văn bản")
 

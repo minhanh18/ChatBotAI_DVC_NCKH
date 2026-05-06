@@ -42,7 +42,21 @@ _ABBREVIATIONS = {
     "bhyt": "bảo hiểm y tế",
     "bhxh": "bảo hiểm xã hội",
     "dvctt": "dịch vụ công trực tuyến",
+    "hkd": "hộ kinh doanh",
+    "tthc": "thủ tục hành chính",
+    "dvc": "dịch vụ công",
+    "ubnd": "ủy ban nhân dân",
+    "cmnd": "chứng minh nhân dân",
+    "hkk": "hộ khẩu",
+    "gplx": "giấy phép lái xe",
+    "ktt": "kết thúc",
+    "tthh": "thủ tục hành chính",
+    "vp": "văn phòng",
+    "tt": "tạm trú",
+    "tn": "thường trú",
+    "cư trú": "đăng ký cư trú",
 }
+
 
 _DOMAIN_SYNONYMS = {
     "tạm trú": ["đăng ký tạm trú", "gia hạn tạm trú", "tạm trú", "cư trú"],
@@ -56,10 +70,12 @@ _DOMAIN_SYNONYMS = {
 
 
 def _normalize_query(text: str) -> str:
+    """Chuẩn hóa nhẹ: lowercase + expand viết tắt còn sót.
+    Query đã được chuẩn hóa sâu hơn bởi query_rewriter.py (LLM) trước khi vào đây.
+    """
     normalized = " ".join((text or "").split()).lower()
     for short, expanded in _ABBREVIATIONS.items():
         normalized = re.sub(rf"(?<!\w){re.escape(short)}(?!\w)", expanded, normalized, flags=re.IGNORECASE)
-    # Giữ phần câu hỏi follow-up nhưng vẫn cho phép các token ngữ cảnh ở trước được dùng.
     return " ".join(normalized.split())
 
 

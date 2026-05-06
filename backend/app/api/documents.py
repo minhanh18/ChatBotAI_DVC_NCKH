@@ -153,7 +153,16 @@ async def upload_document(
         previous_doc.meta = prev_meta
 
     await db.commit()
-    background_tasks.add_task(ingest_document, doc_id)
+    async def _run_ingest_isolated(doc_id: str) -> None:
+        """Chạy ingest trong thread riêng để không block uvicorn event loop."""
+        import asyncio as _asyncio
+        await _asyncio.to_thread(_run_ingest_sync, doc_id)
+
+    def _run_ingest_sync(doc_id: str) -> None:
+        import asyncio as _asyncio
+        _asyncio.run(ingest_document(doc_id))
+
+    background_tasks.add_task(_run_ingest_isolated, doc_id)
 
     return {
         "id": doc_id,

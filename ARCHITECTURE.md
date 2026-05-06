@@ -50,6 +50,10 @@ User gửi câu hỏi
     ├─ Lưu user Message
     ├─ Kiểm tra out-of-domain → từ chối ngay nếu ngoài lĩnh vực
     ├─ Kiểm tra context clarification
+    ├─ rewrite_query() — chuẩn hóa query (LLM, timeout 3s, cached)
+    │   ├─ _needs_rewrite(): bỏ qua nếu query đã đủ dấu tiếng Việt
+    │   ├─ Gemini xử lý: không dấu / viết tắt / sai chính tả / khẩu ngữ
+    │   └─ fail-safe: dùng query gốc nếu lỗi hoặc timeout
     └─ Gọi agent_router.route()
         │
         ▼

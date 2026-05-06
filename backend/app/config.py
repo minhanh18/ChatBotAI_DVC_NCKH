@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # ── Embedding ───────────────────────────────────────────
     # Ưu tiên lại model cũ để giữ chất lượng retrieve gần v8.
     # Nếu model cũ không còn khả dụng, embedder sẽ tự fallback sang model mới.
-    EMBEDDING_MODEL: str = "text-embedding-004"
+    EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_FALLBACK_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIMENSION: int = 768
 

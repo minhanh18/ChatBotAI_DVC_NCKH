@@ -63,12 +63,9 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
-      # property: host → trả về full domain: chatbot-backend-qhsy.onrender.com
+      # Hardcode full domain vì fromService property:host chỉ trả về hostname ngắn
       - key: BACKEND_HOST
-        fromService:
-          name: chatbot-backend
-          type: web
-          property: host
+        value: chatbot-backend-qhsy.onrender.com
 
   # ── Worker (giữ lại nhưng chỉ cần health check, ingest đã chuyển sang backend) ──
   - type: web

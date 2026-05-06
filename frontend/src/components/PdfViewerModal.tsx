@@ -28,10 +28,26 @@ export function PdfViewerModal({
   const [error, setError] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // Lấy URL không có fragment (#page=N) để iframe load đúng trang đầu
+  const baseUrl = url.split('#')[0];
+
   const isPdf =
     fileType?.toLowerCase() === 'pdf' ||
-    url.includes('/file') ||
-    url.toLowerCase().endsWith('.pdf');
+    baseUrl.includes('/file') ||
+    baseUrl.toLowerCase().endsWith('.pdf');
+
+  // Kiểm tra URL trước khi load iframe để tránh hiển thị JSON lỗi
+  useEffect(() => {
+    if (!isPdf) { setLoading(false); return; }
+    setLoading(true);
+    setError(false);
+    fetch(baseUrl, { method: 'HEAD' })
+      .then((res) => {
+        if (!res.ok) setError(true);
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+  }, [baseUrl, isPdf]);
 
   // Đóng bằng phím Escape
   useEffect(() => {
@@ -72,7 +88,7 @@ export function PdfViewerModal({
 
           <div className="flex items-center gap-1 shrink-0 ml-2">
             <a
-              href={url}
+              href={baseUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="p-1.5 rounded-lg text-[#9a7060] hover:text-[#5a3825] hover:bg-[#f0e0d4] transition-colors"
@@ -114,7 +130,7 @@ export function PdfViewerModal({
                 </p>
               </div>
               <a
-                href={url}
+                href={baseUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#b27454] text-white text-sm hover:bg-[#9e6040] transition-colors"
@@ -125,16 +141,14 @@ export function PdfViewerModal({
             </div>
           )}
 
-          {/* PDF iframe — luôn render để tận dụng cache */}
-          {isPdf && (
+          {/* PDF iframe — chỉ render khi không có lỗi */}
+          {isPdf && !error && !loading && (
             <iframe
               ref={iframeRef}
-              src={url}
+              src={baseUrl}
               className="w-full h-full border-0"
               title={title}
-              onLoad={() => setLoading(false)}
-              onError={() => { setLoading(false); setError(true); }}
-              style={{ display: error ? 'none' : 'block' }}
+              style={{ display: 'block' }}
             />
           )}
 

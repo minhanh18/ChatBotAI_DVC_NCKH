@@ -105,6 +105,8 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
     try {
       setResetting(true);
       await resetAdminMonitoring(auth.user, auth.pass);
+      // Thông báo ChatWindow xóa trạng thái để đồng bộ sau reset
+      window.dispatchEvent(new CustomEvent('chatbot:monitoring-reset'));
       const [statsData, logsData, dailyData, feedbackData, conversationsData] = await Promise.all([
         adminDashboard(auth.user, auth.pass),
         adminLogs(auth.user, auth.pass, 30),

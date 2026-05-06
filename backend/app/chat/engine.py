@@ -1048,8 +1048,31 @@ def _strip_inline_source_links(text: str) -> str:
     return text
 
 
+_LEGAL_HEADER_RE = re.compile(
+    r'^(?:Điều\\s+\\d+\\w*\\.?\\s*(?:[^0-9]{1,100})?)?'
+    r'(?:\\d+\\.\\s+(?=[A-ZĐÁÀẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÉÈẺẼẸÊẾỀỂỄỆÍÌỈĨỊÓÒỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÚÙỦŨỤƯỨỪỬỮỰÝỲỶỸỴ]))',
+    re.UNICODE,
+)
+
+
+def _strip_legal_header_from_quote(body: str) -> str:
+    """Bỏ tiêu đề điều/khoản/điểm ở đầu nội dung blockquote.
+
+    Ví dụ: "Điều 27. Điều kiện đăng ký tạm trú 1. Công dân đến..."
+    → "Công dân đến..."
+    """
+    m = _LEGAL_HEADER_RE.match(body)
+    if m and m.end() > 0 and m.end() < len(body):
+        remainder = body[m.end():].strip()
+        # Chỉ bỏ header nếu phần còn lại bắt đầu bằng chữ (tức là câu thật)
+        if remainder and (remainder[0].isupper() or remainder[0].isalpha()):
+            return remainder
+    return body
+
+
 def _format_legal_blockquotes(text: str) -> str:
-    """Chuẩn hóa trích điều khoản: không ngoặc kép lặp, không in đậm, chỉ in nghiêng."""
+    """Chuẩn hóa trích điều khoản: không ngoặc kép lặp, không in đậm, chỉ in nghiêng.
+    Bỏ tiêu đề điều/khoản ở đầu nội dung blockquote nếu đã có phía trên."""
     if not text:
         return text
 
@@ -1064,9 +1087,11 @@ def _format_legal_blockquotes(text: str) -> str:
             body = re.sub(r'^>\s?', '', stripped).strip()
             # Gỡ emphasis/ngoặc kép bao ngoài bị model lặp.
             body = body.replace('**', '')
-            body = re.sub(r'^[“”"\'`\s]+', '', body)
-            body = re.sub(r'[“”"\'`\s]+$', '', body)
+            body = re.sub(r'^[\u201c\u201d"\'`\s]+', '', body)
+            body = re.sub(r'[\u201c\u201d"\'`\s]+$', '', body)
             body = body.strip()
+            # Bỏ tiêu đề "Điều X. Tên điều / Khoản Y." ở đầu nội dung blockquote
+            body = _strip_legal_header_from_quote(body)
             if body:
                 # Tránh wrap hai lần nếu model đã italic.
                 body = body.strip('*_')

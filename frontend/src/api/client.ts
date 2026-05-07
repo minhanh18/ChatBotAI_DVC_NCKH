@@ -133,7 +133,7 @@ function normalizeConversationTitle(title: string) {
   return title === 'New conversation' ? 'Hội thoại mới' : title;
 }
 
-function authHeaders(auth?: AdminAuth) {
+function authHeaders(auth?: AdminAuth): Record<string, string> {
   return auth ? { Authorization: `Basic ${btoa(`${auth.user}:${auth.pass}`)}` } : {};
 }
 
@@ -266,7 +266,10 @@ export const uploadDocument = (datasetId: string, file: File, auth: AdminAuth) =
   const fd = new FormData();
   fd.append('file', file);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000); // 2 phút timeout
+  // Timeout dựa trên kích thước file: tối thiểu 5 phút, tối đa 20 phút
+  // File lớn (~100MB) qua nginx buffering có thể mất 3-5 phút trên đường truyền chậm
+  const timeoutMs = Math.max(300_000, Math.min(1_200_000, file.size / 100)); // 5–20 phút
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   return apiFetch(`/documents/datasets/${datasetId}/upload`, {
     method: 'POST', body: fd, headers: authHeaders(auth), signal: controller.signal,
   }).finally(() => clearTimeout(timer));

@@ -19,12 +19,11 @@ from app.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     # Render free tier: giới hạn 25 connections tổng cộng
-    # pool_size nhỏ để tránh starve khi background task giữ connection
-    pool_size=5,
-    max_overflow=5,
-    pool_recycle=1800,
+    pool_size=3,
+    max_overflow=3,
+    pool_recycle=300,        # recycle sau 5 phút thay vì 30 phút — tránh stale DNS
     pool_pre_ping=True,      # kiểm tra connection còn sống trước khi dùng
-    pool_timeout=30,         # raise timeout thay vì block mãi mãi
+    pool_timeout=30,
     echo=settings.DEBUG,
 )
 

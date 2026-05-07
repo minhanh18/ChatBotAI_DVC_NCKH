@@ -159,12 +159,13 @@ async def upload_document(
 
     async def _save_file_content_to_db(doc_id: str, content: bytes) -> None:
         """Lưu bytes vào DB sau khi response đã trả về — tránh timeout.
-        Dùng retry đơn giản vì Render Postgres đôi khi cần vài giây sau commit đầu tiên.
+        Delay nhỏ để đảm bảo DB connection pool đã ổn định sau cold start.
         """
         import logging as _logging
         _log = _logging.getLogger(__name__)
         from app.models.db import AsyncSessionLocal
-        for attempt in range(3):
+        await asyncio.sleep(2)  # cho pool kịp stabilize sau cold start
+        for attempt in range(5):
             try:
                 async with AsyncSessionLocal() as session:
                     d = (await session.execute(
@@ -173,11 +174,12 @@ async def upload_document(
                     if d:
                         d.file_content = content
                         await session.commit()
-                return  # thành công, thoát vòng lặp
+                        _log.info("Đã lưu file_content vào DB cho doc %s", doc_id)
+                return
             except Exception as _e:
-                _log.warning("Không lưu được file_content (lần %d/3): %s", attempt + 1, _e)
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)  # backoff: 1s rồi 2s
+                _log.warning("Không lưu được file_content (lần %d/5): %s", attempt + 1, _e)
+                if attempt < 4:
+                    await asyncio.sleep(3 * (attempt + 1))  # backoff: 3s, 6s, 9s, 12s
 
     # Dùng asyncio.create_task thay vì BackgroundTasks:
     # - BackgroundTasks chạy TUẦN TỰ sau response (save_file_content → rồi mới ingest)

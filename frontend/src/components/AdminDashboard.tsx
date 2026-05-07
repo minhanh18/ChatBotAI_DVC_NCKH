@@ -63,8 +63,9 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
 
   useEffect(() => {
     let mounted = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const load = async () => {
+    const load = async (attempt = 1) => {
       setLoading(true);
       setError('');
       try {
@@ -88,6 +89,17 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
         }
       } catch (err: any) {
         if (!mounted) return;
+        const is502 = (err.status === 502) || (err.message || '').includes('502');
+        // Tự động retry tối đa 5 lần khi backend đang wake up (502)
+        if (is502 && attempt <= 5) {
+          const delay = attempt * 8000; // 8s, 16s, 24s, 32s, 40s
+          setError(`Backend đang khởi động, thử lại sau ${delay / 1000}s... (lần ${attempt}/5)`);
+          setLoading(false);
+          retryTimer = setTimeout(() => {
+            if (mounted) load(attempt + 1);
+          }, delay);
+          return;
+        }
         setError(err.message || 'Không thể tải dashboard');
       } finally {
         if (mounted) setLoading(false);
@@ -97,6 +109,7 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
     load();
     return () => {
       mounted = false;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [auth.pass, auth.user]);
 
@@ -134,20 +147,28 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
   }
 
   if (error) {
+    const isRetrying = error.includes('lần ') && error.includes('/5');
     return (
       <div className="h-full grid place-items-center bg-[#f6f0ec] p-6">
         <div className="max-w-md w-full bg-white rounded-2xl border border-[#ead8cf] shadow-sm p-8 text-center">
-          <div className="w-12 h-12 rounded-full bg-red-50 border border-red-100 flex items-center justify-center mx-auto mb-4">
-            <span className="text-red-400 text-xl">⚠</span>
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${isRetrying ? 'bg-yellow-50 border border-yellow-100' : 'bg-red-50 border border-red-100'}`}>
+            <span className={`text-xl ${isRetrying ? 'animate-spin inline-block' : 'text-red-400'}`}>{isRetrying ? '⟳' : '⚠'}</span>
           </div>
-          <h3 className="text-base font-semibold text-[#6b4637] mb-2">Không thể tải dữ liệu</h3>
+          <h3 className="text-base font-semibold text-[#6b4637] mb-2">
+            {isRetrying ? 'Backend đang khởi động...' : 'Không thể tải dữ liệu'}
+          </h3>
           <p className="text-sm text-[#9d7867] mb-6 leading-relaxed">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#a86a4f] text-white text-sm font-medium hover:bg-[#945843] transition-colors"
-          >
-            Thử lại
-          </button>
+          {!isRetrying && (
+            <button
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#a86a4f] text-white text-sm font-medium hover:bg-[#945843] transition-colors"
+            >
+              Thử lại ngay
+            </button>
+          )}
+          {isRetrying && (
+            <p className="text-xs text-[#b89080]">Render free tier cần 30–60s để wake up. Vui lòng chờ...</p>
+          )}
         </div>
       </div>
     );

@@ -54,6 +54,8 @@ services:
         value: "5"
       - key: RETRIEVAL_SCORE_THRESHOLD
         value: "0.30"
+      - key: CORS_ORIGINS
+        value: '["https://chatbot-frontend-oymx.onrender.com","http://localhost","http://localhost:3000"]'
 
   # ── Frontend ───────────────────────────────────────────────────────────────
   - type: web

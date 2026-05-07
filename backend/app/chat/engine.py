@@ -1037,14 +1037,14 @@ def _strip_inline_source_links(text: str) -> str:
     text = re.sub(r'\s*\[\[?\d+\]?\]\((?:https?://|/)[^)]+\)', '', text)
     # ([1])(https://...) — dạng biến thể ít gặp
     text = re.sub(r'\s*\(\s*\[\d+\]\s*\)\((?:https?://|/)[^)]+\)', '', text)
-    # ([N]) standalone — web citation, nguồn đã hiển thị ở panel; KHÔNG xóa ([N], trang X)
-    text = re.sub(r'\s*\(\s*\[\d+\]\s*\)(?!\s*,?\s*trang)', '', text, flags=re.IGNORECASE)
+    # ([N]) hoặc ([N],) standalone — web citation, nguồn đã hiển thị ở panel; KHÔNG xóa ([N], trang X)
+    text = re.sub(r'\s*\(\s*\[\d+\]\s*,?\s*\)(?!\s*,?\s*trang)', '', text, flags=re.IGNORECASE)
     # [1] standalone (không trong ngoặc, không trước trang) — xóa
     # Bảo vệ: ([N], trang X) và [1](url)
     text = re.sub(r'(?<!\()\s*\[\d+\](?!\s*,\s*trang)(?!\()(?!\]?\()', '', text, flags=re.IGNORECASE)
-    # Dọn dấu câu thừa
+    # Dọn dấu câu thừa còn lại như (,) hoặc (.)
     text = re.sub(r'\s+([,.;:!?])', r'\1', text)
-    text = re.sub(r'\(\s*[,;]\s*\)', '', text)
+    text = re.sub(r'\(\s*[,;.]\s*\)', '', text)
     return text
 
 
@@ -1543,6 +1543,7 @@ class ChatEngine:
         force_web: bool = False,
         session_key: Optional[str] = None,
         request_start_ms: Optional[float] = None,
+        web_search_query: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         from app.chat.session_cache import (
             cache_chunks, get_cached_chunks, maybe_update_summary,
@@ -1635,6 +1636,7 @@ class ChatEngine:
                             image_part=image_part,
                             force_web=True,
                             emit_support_citations=not total_no_answer,
+                            web_search_query=web_search_query,
                         ):
                             if event.type == "token":
                                 full_text += str(event.data)
@@ -1660,6 +1662,7 @@ class ChatEngine:
                             image_part=image_part,
                             force_web=True,
                             emit_support_citations=True,
+                            web_search_query=web_search_query,
                         ):
                             if event.type == "token":
                                 full_text += str(event.data)
@@ -1918,15 +1921,19 @@ class ChatEngine:
         image_part: Optional[Any] = None,
         force_web: bool = False,
         emit_support_citations: bool = True,
+        web_search_query: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         system_prompt = _build_ai_prompt(domain_instructions=_domain_instructions(query, rag=False))
 
         support_chunks = support_chunks or []
 
+        # Dùng web_search_query (đã bỏ prefix chủ đề) cho Tavily để không lệch chủ đề
+        _tavily_query = web_search_query or query
+
         # Khởi động web fetch sớm (song song) nếu cần, để không phải đợi tuần tự
         web_fetch_task: asyncio.Task | None = None
-        if force_web or should_search_web(query):
-            web_fetch_task = asyncio.create_task(maybe_fetch_web_context(query, force=force_web))
+        if force_web or should_search_web(_tavily_query):
+            web_fetch_task = asyncio.create_task(maybe_fetch_web_context(_tavily_query, force=force_web))
 
         if support_chunks:
             rag_context, rag_citations = _build_rag_context(support_chunks)

@@ -9,6 +9,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +57,8 @@ async def reset_monitoring(db: AsyncSession = Depends(get_db), _=Depends(verify_
     await db.execute(text("TRUNCATE TABLE messages RESTART IDENTITY CASCADE"))
     await db.execute(text("TRUNCATE TABLE conversations RESTART IDENTITY CASCADE"))
     await db.commit()
+    # Đảm bảo transaction commit hoàn toàn trước khi frontend re-fetch
+    await db.close()
     return {"message": "Đã đặt lại toàn bộ giám sát: hội thoại, tin nhắn, log và đánh giá."}
 
 
@@ -120,7 +123,7 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(verify_admin))
         .group_by(MessageFeedback.rating)
     )).fetchall()
 
-    return {
+    data = {
         "conversations": {"total": total_convs, "last_24h": convs_24h},
         "messages": {"total": total_msgs, "last_24h": msgs_24h},
         "answer_modes_7d": mode_breakdown,
@@ -129,6 +132,7 @@ async def dashboard(db: AsyncSession = Depends(get_db), _=Depends(verify_admin))
         "documents": {row.status: row.cnt for row in doc_stats},
         "feedback_7d": {row.rating: row.cnt for row in feedback_7d},
     }
+    return JSONResponse(content=data, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 
 # ── Usage logs ────────────────────────────────────────────────────────────────

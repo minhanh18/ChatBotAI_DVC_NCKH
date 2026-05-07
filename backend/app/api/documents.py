@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -299,14 +299,15 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(get_db), 
     return {"message": "Đã xoá tài liệu"}
 
 
-@router.get("/{document_id}/file")
+@router.api_route("/{document_id}/file", methods=["GET", "HEAD"])
 async def serve_document_file(
+    request: Request,
     document_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Serve file tài liệu gốc để xem trong trình duyệt.
-    Hỗ trợ PDF fragment #page=N để mở đúng trang.
+    Hỗ trợ cả GET (nội dung) và HEAD (kiểm tra tồn tại) để PdfViewerModal pre-check được.
     Không yêu cầu xác thực admin để iframe trong chatbot có thể load được.
     """
     doc = (await db.execute(
@@ -317,7 +318,7 @@ async def serve_document_file(
 
     file_path = Path(doc.file_path) if doc.file_path else None
     if not file_path or not file_path.exists():
-        # Fallback: thử tìm theo UPLOAD_DIR + doc_id
+        # Fallback 1: tìm theo UPLOAD_DIR + doc_id + ext
         for ext in settings.ALLOWED_EXTENSIONS:
             candidate = Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
             if candidate.exists():
@@ -325,15 +326,35 @@ async def serve_document_file(
                 break
 
     if not file_path or not file_path.exists():
+        # Fallback 2: tìm theo tên gốc trong UPLOAD_DIR
+        if doc.name:
+            candidate = Path(settings.UPLOAD_DIR) / doc.name
+            if candidate.exists():
+                file_path = candidate
+
+    if not file_path or not file_path.exists():
         raise HTTPException(404, "File không tồn tại trên server")
 
     media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+
+    # HEAD request: chỉ trả header, không trả body
+    if request.method == "HEAD":
+        from starlette.responses import Response
+        return Response(
+            status_code=200,
+            headers={
+                "Content-Type": media_type,
+                "Content-Disposition": "inline",
+                "Cache-Control": "private, max-age=3600",
+            },
+        )
+
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
         filename=doc.name,
         headers={
-            "Content-Disposition": "inline",                          # render trong browser
+            "Content-Disposition": "inline",
             "Cache-Control": "private, max-age=3600",
             "X-Content-Type-Options": "nosniff",
         },

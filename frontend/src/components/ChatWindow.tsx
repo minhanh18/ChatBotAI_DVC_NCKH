@@ -531,8 +531,7 @@ export function ChatWindow({
               error: shouldHideTechnical ? 'Xin lỗi! Hiện tại tôi đang gặp một số sự cố.' : err,
             });
             setStreamPhase('idle');
-            setPendingUserText('');
-            setPendingUserTime(null);
+            // KHÔNG xóa pendingUserText khi lỗi — giữ câu hỏi hiển thị để user thấy và thử lại
           },
         };
 
@@ -561,8 +560,7 @@ export function ChatWindow({
       } catch (err: any) {
         if (abort.signal.aborted) return;
         setStream({ active: false, text: '', citations: [], error: err?.message || 'Không thể gửi câu hỏi.' });
-        setPendingUserText('');
-        setPendingUserTime(null);
+        // KHÔNG xóa pendingUserText — giữ câu hỏi hiển thị cùng lỗi
       }
     },
     [activeConvId, adminMode, input, loadConversations, loadMessages, selectedImage, sessionKey, stream.active],
@@ -904,11 +902,26 @@ export function ChatWindow({
           <div className={`mx-auto ${compactUi ? 'max-w-full' : 'max-w-5xl'}`}>
             {stream.error && (
               <div
-                className={`mb-3 rounded-2xl border px-4 py-3 text-sm flex items-center gap-2 ${
+                className={`mb-3 rounded-2xl border px-4 py-3 text-sm flex items-center gap-3 ${
                   isUserUi ? 'border-[#ebcfc3] bg-[#fff3ec] text-[#8c533f]' : 'border-[#ebcfc3] bg-[#fff3ec] text-[#8c533f]'
                 }`}
               >
-                <AlertCircle size={16} /> {stream.error}
+                <AlertCircle size={16} className="shrink-0" />
+                <span className="flex-1">{stream.error}</span>
+                {pendingUserText && (
+                  <button
+                    onClick={() => {
+                      const retryText = pendingUserText;
+                      setPendingUserText('');
+                      setPendingUserTime(null);
+                      setStream(STREAM_IDLE);
+                      submitMessage(retryText);
+                    }}
+                    className="shrink-0 px-3 py-1.5 rounded-xl bg-[#a86a4f] text-white text-xs font-medium hover:bg-[#945843] transition-colors"
+                  >
+                    Thử lại
+                  </button>
+                )}
               </div>
             )}
 

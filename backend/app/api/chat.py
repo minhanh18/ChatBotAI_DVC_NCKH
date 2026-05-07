@@ -128,6 +128,11 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     # Fail-safe: nếu lỗi/timeout thì vẫn dùng query gốc
     effective_query = await rewrite_query(effective_query)
 
+    # Query sạch để dùng cho web search — bỏ prefix "Chủ đề hiện tại: X. Câu hỏi: "
+    # để Tavily không bị lệch chủ đề tìm kiếm
+    _topic_prefix_re = re.compile(r'^Chủ đề hiện tại:[^.]+\.\s*Câu hỏi:\s*', re.IGNORECASE)
+    web_search_query = _topic_prefix_re.sub('', effective_query).strip() or effective_query
+
     requested_mode = AnswerMode(req.mode) if req.mode in ("rag", "ai") else None
     force_web = await _should_auto_force_web(db, conversation.id, req.query)
     # Không ép AI/search trước khi RAG được kiểm tra. force_web chỉ được dùng ở tầng fallback
@@ -152,6 +157,7 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
         async for chunk in chat_engine.stream_response(
             query=effective_query,
+            web_search_query=web_search_query,
             decision=decision,
             history=history,
             db=db,

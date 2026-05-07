@@ -4,8 +4,11 @@ FastAPI application entry point.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -46,7 +49,7 @@ app.include_router(docs_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 
 
-# ── Lifecycle ─────────────────────────────────────────────────────────────────
+# ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 @app.get("/api/health")
@@ -55,6 +58,13 @@ async def health_check():
     return {"status": "ok", "version": settings.APP_VERSION}
 
 
+@app.get("/")
+async def root():
+    return {"message": f"{settings.APP_NAME} API", "docs": "/api/docs"}
+
+
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
+
 @app.on_event("startup")
 async def startup():
     """Tạo bảng và extension pgvector khi khởi động."""
@@ -62,23 +72,20 @@ async def startup():
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.create_all)
-            # Migration: thêm cột file_content nếu chưa có (ephemeral fs workaround)
             await conn.execute(text("""
                 ALTER TABLE documents
                 ADD COLUMN IF NOT EXISTS file_content BYTEA
             """))
         logger.info("✓ Database ready")
     except Exception as e:
-        # Không crash toàn bộ app khi DB lỗi — health check vẫn hoạt động
         logger.error("✗ Database startup error (non-fatal): %s", e)
 
     logger.info("✓ %s v%s started", settings.APP_NAME, settings.APP_VERSION)
 
-    # Background GC cho session cache (chạy mỗi 30 phút)
+    # Background GC cho session cache (mỗi 30 phút)
     async def _session_gc_loop():
-        import asyncio as _asyncio
         while True:
-            await _asyncio.sleep(1800)
+            await asyncio.sleep(1800)
             try:
                 from app.chat.session_cache import gc_expired_sessions
                 removed = gc_expired_sessions()
@@ -87,22 +94,32 @@ async def startup():
             except Exception as _e:
                 logger.debug("Session GC error (ignored): %s", _e)
 
-    import asyncio as _asyncio
-    _asyncio.create_task(_session_gc_loop())
+    asyncio.create_task(_session_gc_loop())
+
+    # ── Self-ping keep-alive: tránh Render free tier ngủ đông ─────────────────
+    # Render sẽ sleep service sau 15 phút không có traffic từ bên ngoài.
+    # Self-ping mỗi 10 phút giữ service luôn thức.
+    # Chỉ chạy khi có RENDER_EXTERNAL_URL (tức là đang chạy trên Render).
+    _self_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not _self_url:
+        # Fallback: tự build URL từ PORT
+        _port = os.environ.get("PORT", "8000")
+        _self_url = f"http://0.0.0.0:{_port}"
+
+    async def _keep_alive_loop():
+        await asyncio.sleep(60)  # chờ 1 phút sau startup trước khi bắt đầu
+        while True:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.get(f"{_self_url}/health")
+                    logger.debug("Keep-alive ping: %s", r.status_code)
+            except Exception as _e:
+                logger.debug("Keep-alive ping failed (ignored): %s", _e)
+            await asyncio.sleep(600)  # mỗi 10 phút
+
+    asyncio.create_task(_keep_alive_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown():
     await engine.dispose()
-
-
-# ── Health check ──────────────────────────────────────────────────────────────
-
-@app.get("/api/health")
-async def health():
-    return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
-
-
-@app.get("/")
-async def root():
-    return {"message": f"{settings.APP_NAME} API", "docs": "/api/docs"}

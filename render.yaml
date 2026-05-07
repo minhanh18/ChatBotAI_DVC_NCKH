@@ -66,28 +66,8 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
-      # Hardcode full domain vì fromService property:host chỉ trả về hostname ngắn
       - key: BACKEND_HOST
         value: chatbot-backend-qhsy.onrender.com
-
-  # ── Worker (giữ lại nhưng chỉ cần health check, ingest đã chuyển sang backend) ──
-  - type: web
-    name: chatbot-worker
-    runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    plan: free
-    dockerCommand: sh /app/worker_start.sh
-    envVars:
-      - key: DATABASE_URL_RAW
-        fromDatabase:
-          name: chatbot-db
-          property: connectionString
-      - key: REDIS_URL_RAW
-        fromService:
-          name: chatbot-redis
-          type: keyvalue
-          property: connectionString
 
 databases:
   - name: chatbot-db

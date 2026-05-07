@@ -139,7 +139,10 @@ async def upload_document(
         dataset_id=UUID(dataset_id),
         name=file.filename or f"document_{doc_id}",
         file_path=str(file_path),
-        file_content=None,      # sẽ được lưu bởi background task để không block response
+        # Lưu ngay file_content trong cùng transaction — loại bỏ hoàn toàn race condition.
+        # Bytes đã có trong RAM (biến content), không tốn I/O thêm.
+        # Ingestor luôn có thể restore file khi ephemeral fs mất dữ liệu sau sleep/restart.
+        file_content=content,
         file_type=ext,
         file_size=len(content),
         status="pending",
@@ -157,37 +160,7 @@ async def upload_document(
 
     await db.commit()
 
-    async def _save_file_content_to_db(doc_id: str, content: bytes) -> None:
-        """Lưu bytes vào DB sau khi response đã trả về — tránh timeout.
-        Delay nhỏ để đảm bảo DB connection pool đã ổn định sau cold start.
-        """
-        import logging as _logging
-        _log = _logging.getLogger(__name__)
-        from app.models.db import AsyncSessionLocal
-        await asyncio.sleep(2)  # cho pool kịp stabilize sau cold start
-        for attempt in range(5):
-            try:
-                async with AsyncSessionLocal() as session:
-                    d = (await session.execute(
-                        select(Document).where(Document.id == UUID(doc_id))
-                    )).scalar_one_or_none()
-                    if d:
-                        d.file_content = content
-                        await session.commit()
-                        _log.info("Đã lưu file_content vào DB cho doc %s", doc_id)
-                return
-            except Exception as _e:
-                _log.warning("Không lưu được file_content (lần %d/5): %s", attempt + 1, _e)
-                if attempt < 4:
-                    await asyncio.sleep(3 * (attempt + 1))  # backoff: 3s, 6s, 9s, 12s
-
-    # Dùng asyncio.create_task thay vì BackgroundTasks:
-    # - BackgroundTasks chạy TUẦN TỰ sau response (save_file_content → rồi mới ingest)
-    #   và giữ event loop sau khi response gửi xong → block các request tiếp theo.
-    # - create_task chạy CONCURRENTLY ngay lập tức, không block response,
-    #   không block request khác vì ingestor dùng asyncio.to_thread cho phần CPU-bound
-    #   và giải phóng DB connection giữa các bước (đã fix ở ingestor.py).
-    asyncio.create_task(_save_file_content_to_db(doc_id, content))
+    # Ingest chạy concurrently — không block response, không block request khác
     asyncio.create_task(ingest_document(doc_id))
 
     return {

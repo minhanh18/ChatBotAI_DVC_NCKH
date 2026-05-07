@@ -26,28 +26,33 @@ export function PdfViewerModal({
 }: PdfViewerModalProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [resolvedIsPdf, setResolvedIsPdf] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Lấy URL không có fragment (#page=N) để iframe load đúng trang đầu
   const baseUrl = url.split('#')[0];
 
-  const isPdf =
-    fileType?.toLowerCase() === 'pdf' ||
-    baseUrl.includes('/file') ||
-    baseUrl.toLowerCase().endsWith('.pdf');
-
-  // Kiểm tra URL trước khi load iframe để tránh hiển thị JSON lỗi
+  // Kiểm tra URL và xác định loại file từ Content-Type thực tế của server
   useEffect(() => {
-    if (!isPdf) { setLoading(false); return; }
     setLoading(true);
     setError(false);
+    setResolvedIsPdf(false);
     fetch(baseUrl, { method: 'HEAD' })
       .then((res) => {
-        if (!res.ok) setError(true);
+        if (!res.ok) {
+          setError(true);
+        } else {
+          const ct = res.headers.get('content-type') || '';
+          // Xác định có phải PDF không từ Content-Type thực tế hoặc fileType prop
+          const isPdfByContentType = ct.includes('pdf');
+          const isPdfByProp = fileType?.toLowerCase() === 'pdf';
+          const isPdfByName = baseUrl.toLowerCase().endsWith('.pdf');
+          setResolvedIsPdf(isPdfByContentType || isPdfByProp || isPdfByName);
+        }
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [baseUrl, isPdf]);
+  }, [baseUrl, fileType]);
 
   // Đóng bằng phím Escape
   useEffect(() => {
@@ -142,7 +147,7 @@ export function PdfViewerModal({
           )}
 
           {/* PDF iframe — chỉ render khi không có lỗi */}
-          {isPdf && !error && !loading && (
+          {resolvedIsPdf && !error && !loading && (
             <iframe
               ref={iframeRef}
               src={baseUrl}
@@ -153,7 +158,7 @@ export function PdfViewerModal({
           )}
 
           {/* Non-PDF: fallback */}
-          {!isPdf && !loading && (
+          {!resolvedIsPdf && !loading && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#fafafa] p-8 text-center">
               <FileText size={40} className="text-[#d4a899]" />
               <div>
@@ -178,7 +183,7 @@ export function PdfViewerModal({
           )}
 
           {/* Trigger load for non-PDF */}
-          {!isPdf && loading && (
+          {!resolvedIsPdf && loading && (
             <div className="hidden">
               <img src={url} alt="" onLoad={() => setLoading(false)} onError={() => setLoading(false)} />
             </div>

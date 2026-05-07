@@ -336,7 +336,16 @@ async def serve_document_file(
     if not file_path or not file_path.exists():
         # Fallback 3: serve trực tiếp từ DB bytes (file bị mất do ephemeral filesystem)
         if doc.file_content:
-            media_type = mimetypes.guess_type(doc.name)[0] or "application/octet-stream"
+            # Xác định media_type từ file_type trong DB (chính xác hơn guess từ tên)
+            ft = (doc.file_type or '').lower().lstrip('.')
+            media_type = {
+                'pdf': 'application/pdf',
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'doc': 'application/msword',
+                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'txt': 'text/plain; charset=utf-8',
+            }.get(ft) or mimetypes.guess_type(doc.name)[0] or 'application/octet-stream'
+
             if request.method == "HEAD":
                 from starlette.responses import Response
                 return Response(
@@ -358,7 +367,7 @@ async def serve_document_file(
                     "X-Content-Type-Options": "nosniff",
                 },
             )
-        raise HTTPException(404, "File không tồn tại trên server")
+        raise HTTPException(404, "File không tồn tại trên server — vui lòng upload lại tài liệu")
 
     media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
 
@@ -384,6 +393,42 @@ async def serve_document_file(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.post("/backfill-file-content")
+async def backfill_file_content(db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+    """
+    Admin endpoint: đọc file từ disk và lưu vào cột file_content trong DB
+    cho các tài liệu chưa có (upload trước khi có cột này).
+    Gọi 1 lần sau khi deploy bản có cột file_content.
+    """
+    docs = (await db.execute(
+        select(Document).where(Document.file_content.is_(None))
+    )).scalars().all()
+
+    updated = 0
+    missing = 0
+    for doc in docs:
+        file_path = Path(doc.file_path) if doc.file_path else None
+        # Thử tìm file trên disk
+        if not file_path or not file_path.exists():
+            for ext in settings.ALLOWED_EXTENSIONS:
+                candidate = Path(settings.UPLOAD_DIR) / f"{doc.id}.{ext}"
+                if candidate.exists():
+                    file_path = candidate
+                    break
+        if file_path and file_path.exists():
+            doc.file_content = file_path.read_bytes()
+            updated += 1
+        else:
+            missing += 1
+
+    await db.commit()
+    return {
+        "updated": updated,
+        "missing_on_disk": missing,
+        "message": f"Đã backfill {updated} tài liệu. {missing} tài liệu không còn file trên disk — cần upload lại."
+    }
 
 
 @router.post("/{document_id}/reindex")

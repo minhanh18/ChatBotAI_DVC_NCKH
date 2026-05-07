@@ -287,7 +287,7 @@ function CitationsPanel({
   const isWarm = variant === 'user';
   const visibleCitations = sanitizeCitations(citations);
   const [pdfModal, setPdfModal] = useState<{
-    url: string; title: string; pageNumber?: number;
+    url: string; title: string; pageNumber?: number; fileType?: string;
   } | null>(null);
 
   if (visibleCitations.length === 0) return null;
@@ -332,7 +332,7 @@ function CitationsPanel({
                     {canOpenDoc ? (
                       /* Tài liệu nội bộ → mở PDF modal */
                       <button
-                        onClick={() => setPdfModal({ url: docPageUrl, title, pageNumber: citation.page_number ?? undefined })}
+                        onClick={() => setPdfModal({ url: docPageUrl, title, pageNumber: citation.page_number ?? undefined, fileType: citation.file_type ?? undefined })}
                         className={`font-medium text-left hover:underline underline-offset-2 ${compact ? 'text-[11px]' : 'text-xs'} ${isWarm ? 'text-[#734232]' : 'text-slate-700'}`}
                       >
                         {title}
@@ -366,6 +366,7 @@ function CitationsPanel({
           url={pdfModal.url}
           title={pdfModal.title}
           pageNumber={pdfModal.pageNumber}
+          fileType={pdfModal.fileType}
           onClose={() => setPdfModal(null)}
         />
       )}

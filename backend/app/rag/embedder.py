@@ -1,11 +1,11 @@
 """
-Embedding service — ưu tiên lại luồng embedding gần v8 để giữ chất lượng retrieve,
-nhưng vẫn có fallback sang model mới nếu model cũ không còn khả dụng.
+Embedding service với key rotation và retry thông minh.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import random
 from typing import Any
@@ -17,13 +17,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-genai.configure(api_key=settings.GEMINI_API_KEY)
-
 _BATCH_SIZE = 5
 _RETRY_MAX = 6
 _RETRY_DELAY = 3.0
-
-
 
 
 def _is_rate_limited_error(exc: Exception) -> bool:
@@ -31,15 +27,37 @@ def _is_rate_limited_error(exc: Exception) -> bool:
     return any(marker in message for marker in ("429", "resource_exhausted", "quota", "too many requests", "rate limit"))
 
 
+def _build_key_pool() -> list[str]:
+    """Gom tất cả API keys thành 1 pool, loại trùng, bỏ rỗng."""
+    seen: set[str] = set()
+    pool: list[str] = []
+    for key in [settings.GEMINI_API_KEY] + list(settings.GEMINI_API_KEYS):
+        k = (key or "").strip()
+        if k and k not in seen:
+            seen.add(k)
+            pool.append(k)
+    return pool
+
+
 class EmbeddingService:
     def __init__(self, model: str = settings.EMBEDDING_MODEL):
         self.model = model
         self.fallback_model = settings.EMBEDDING_FALLBACK_MODEL
+        self._key_pool = _build_key_pool()
+        # cycle qua keys để phân tải đều
+        self._key_cycle = itertools.cycle(self._key_pool) if self._key_pool else iter([])
+        self._current_key_idx = 0
+
+    def _next_key(self) -> str:
+        """Lấy key tiếp theo trong pool (round-robin)."""
+        if not self._key_pool:
+            return settings.GEMINI_API_KEY
+        self._current_key_idx = (self._current_key_idx + 1) % len(self._key_pool)
+        return self._key_pool[self._current_key_idx]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-
         all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), _BATCH_SIZE):
             batch = texts[i : i + _BATCH_SIZE]
@@ -55,7 +73,9 @@ class EmbeddingService:
         last_error: Exception | None = None
         for attempt in range(_RETRY_MAX):
             try:
-                return await self._embed_batch_prefer_legacy(texts, task_type)
+                # Xoay key mỗi lần retry để tránh hit cùng 1 quota
+                api_key = self._key_pool[attempt % len(self._key_pool)] if self._key_pool else settings.GEMINI_API_KEY
+                return await self._embed_batch_prefer_legacy(texts, task_type, api_key)
             except Exception as exc:
                 last_error = exc
                 if attempt < _RETRY_MAX - 1:
@@ -63,11 +83,8 @@ class EmbeddingService:
                     if _is_rate_limited_error(exc):
                         wait = max(wait, 8.0 + (attempt * 6.0))
                     logger.warning(
-                        "Embedding batch thất bại (lần %d/%d): %s. Retry sau %.1fs",
-                        attempt + 1,
-                        _RETRY_MAX,
-                        exc,
-                        wait,
+                        "Embedding batch thất bại (lần %d/%d, key idx %d): %s. Retry sau %.1fs",
+                        attempt + 1, _RETRY_MAX, attempt % max(len(self._key_pool), 1), exc, wait,
                     )
                     await asyncio.sleep(wait)
                 else:
@@ -75,21 +92,20 @@ class EmbeddingService:
         assert last_error is not None
         raise last_error
 
-    async def _embed_batch_prefer_legacy(self, texts: list[str], task_type: str) -> list[list[float]]:
+    async def _embed_batch_prefer_legacy(self, texts: list[str], task_type: str, api_key: str) -> list[list[float]]:
         try:
-            return await asyncio.to_thread(self._embed_batch_legacy_sync, texts, task_type)
+            return await asyncio.to_thread(self._embed_batch_legacy_sync, texts, task_type, api_key)
         except Exception as exc:
             if not self._should_fallback(exc):
                 raise
             logger.warning(
                 "Legacy embedding model '%s' không dùng được, fallback sang '%s': %s",
-                self.model,
-                self.fallback_model,
-                exc,
+                self.model, self.fallback_model, exc,
             )
-            return await self._embed_batch_http(texts, task_type, self.fallback_model)
+            return await self._embed_batch_http(texts, task_type, self.fallback_model, api_key)
 
-    def _embed_batch_legacy_sync(self, texts: list[str], task_type: str) -> list[list[float]]:
+    def _embed_batch_legacy_sync(self, texts: list[str], task_type: str, api_key: str) -> list[list[float]]:
+        genai.configure(api_key=api_key)
         result = genai.embed_content(
             model=f"models/{self.model}",
             content=texts,
@@ -103,11 +119,11 @@ class EmbeddingService:
             return [payload]
         raise RuntimeError("Legacy embedding response không hợp lệ")
 
-    async def _embed_batch_http(self, texts: list[str], task_type: str, model: str) -> list[list[float]]:
+    async def _embed_batch_http(self, texts: list[str], task_type: str, model: str, api_key: str) -> list[list[float]]:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent"
         headers = {
             "Content-Type": "application/json",
-            "x-goog-api-key": settings.GEMINI_API_KEY,
+            "x-goog-api-key": api_key,
         }
 
         async def _request_one(client: httpx.AsyncClient, text: str) -> list[float]:
@@ -137,15 +153,7 @@ class EmbeddingService:
     @staticmethod
     def _should_fallback(exc: Exception) -> bool:
         message = str(exc).lower()
-        fallback_markers = (
-            "404",
-            "not found",
-            "not supported",
-            "unsupported",
-            "embedcontent",
-            "listmodels",
-            "deprecated",
-        )
+        fallback_markers = ("404", "not found", "not supported", "unsupported", "embedcontent", "listmodels", "deprecated")
         return any(marker in message for marker in fallback_markers)
 
 

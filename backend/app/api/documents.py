@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,7 +76,6 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db), _=
 @router.post("/datasets/{dataset_id}/upload")
 async def upload_document(
     dataset_id: str,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_admin),
@@ -180,11 +179,14 @@ async def upload_document(
                 if attempt < 2:
                     await asyncio.sleep(2 ** attempt)  # backoff: 1s rồi 2s
 
-    # ingest_document là async — gọi trực tiếp trong cùng event loop của uvicorn.
-    # KHÔNG dùng asyncio.to_thread + asyncio.run(): tạo event loop mới trong thread
-    # sẽ làm hỏng connection pool asyncpg → document kẹt mãi ở "pending".
-    background_tasks.add_task(_save_file_content_to_db, doc_id, content)
-    background_tasks.add_task(ingest_document, doc_id)
+    # Dùng asyncio.create_task thay vì BackgroundTasks:
+    # - BackgroundTasks chạy TUẦN TỰ sau response (save_file_content → rồi mới ingest)
+    #   và giữ event loop sau khi response gửi xong → block các request tiếp theo.
+    # - create_task chạy CONCURRENTLY ngay lập tức, không block response,
+    #   không block request khác vì ingestor dùng asyncio.to_thread cho phần CPU-bound
+    #   và giải phóng DB connection giữa các bước (đã fix ở ingestor.py).
+    asyncio.create_task(_save_file_content_to_db(doc_id, content))
+    asyncio.create_task(ingest_document(doc_id))
 
     return {
         "id": doc_id,
@@ -453,7 +455,7 @@ async def backfill_file_content(db: AsyncSession = Depends(get_db), _=Depends(ve
 
 
 @router.post("/{document_id}/reindex")
-async def reindex_document(document_id: str, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
+async def reindex_document(document_id: str, db: AsyncSession = Depends(get_db), _=Depends(verify_admin)):
     doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
     if not doc:
         raise HTTPException(404, "Document không tồn tại")
@@ -463,7 +465,7 @@ async def reindex_document(document_id: str, background_tasks: BackgroundTasks, 
     doc.meta = merge_meta(doc.meta, {"last_reindex_requested_at": datetime.utcnow().isoformat()})
     await db.commit()
 
-    background_tasks.add_task(ingest_document, document_id)
+    asyncio.create_task(ingest_document(document_id))
     return {"message": "Đã bắt đầu re-index có kiểm soát."}
 
 

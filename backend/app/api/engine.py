@@ -355,7 +355,7 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             else "- Ưu tiên các đoạn ngữ cảnh có nêu rõ Điều, Khoản, điểm, tên luật/nghị định/thông tư hoặc hiệu lực văn bản.\n"
         )
         guidance = (
-            "- Nếu đây là câu hỏi thủ tục hành chính, trình bày theo cấu trúc các mục sau (theo đúng thứ tự):\n"
+            "- Người dùng hỏi về **toàn bộ thủ tục** → trình bày theo cấu trúc các mục sau (theo đúng thứ tự):\n"
             "  1. Sơ lược thông tin liên quan\n"
             "  2. Điều kiện / đối tượng áp dụng (nếu có)\n"
             "  3. Hồ sơ cần chuẩn bị\n"
@@ -372,8 +372,10 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "Không đặt link đăng nhập/đăng ký vào phần này.\n"
             "  6. Lưu ý\n"
             "  7. Căn cứ pháp lý — đặt ở GẦN CUỐI, sau phần Lưu ý, không đặt ở đầu hoặc giữa câu trả lời.\n"
-            "  8. Nếu hợp lý, kết thúc bằng gợi ý tự nhiên những bước tiếp theo, viết liền mạch không cần tiêu đề riêng, "
-            "ví dụ: 'Bạn có thể tiến hành trước bằng cách...', 'Nếu chưa có CCCD, bạn nên...' v.v."
+            "  8. Nếu hợp lý, kết thúc bằng gợi ý tự nhiên những bước tiếp theo.\n"
+            "- Người dùng hỏi **riêng lẻ một khía cạnh** (chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi lệ phí, chỉ hỏi điều kiện...) → "
+            "**CHỈ trả lời đúng khía cạnh đó**, không liệt kê các mục khác không được hỏi. "
+            "Ví dụ: hỏi 'hồ sơ cần gì' → chỉ trả lời danh sách hồ sơ, không thêm bước thực hiện hay lệ phí.\n"
             if is_procedure_query(query)
             else ""
         )

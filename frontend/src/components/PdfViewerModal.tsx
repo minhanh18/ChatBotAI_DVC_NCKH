@@ -29,8 +29,10 @@ export function PdfViewerModal({
   const [resolvedIsPdf, setResolvedIsPdf] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Lấy URL không có fragment (#page=N) để iframe load đúng trang đầu
+  // baseUrl: không có fragment — dùng cho HEAD check và external link
   const baseUrl = url.split('#')[0];
+  // iframeUrl: giữ nguyên fragment #page=N nếu có — để iframe scroll đúng trang
+  const iframeUrl = url;
 
   // Kiểm tra URL và xác định loại file từ Content-Type thực tế của server
   useEffect(() => {
@@ -150,7 +152,7 @@ export function PdfViewerModal({
           {resolvedIsPdf && !error && !loading && (
             <iframe
               ref={iframeRef}
-              src={baseUrl}
+              src={iframeUrl}
               className="w-full h-full border-0"
               title={title}
               style={{ display: 'block' }}

@@ -54,6 +54,41 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     user_msg = await _save_user_message(db, conversation, req.query)
     history = await _load_history(db, conversation.id, exclude_message_id=user_msg.id)
 
+    # Shortcut: câu chào hỏi → trả lời ngay, không RAG, không web search, không rewrite
+    if is_greeting_query(req.query):
+        _greeting_reply = "Xin chào! Tôi là trợ lý hỗ trợ thủ tục hành chính và dịch vụ công. Bạn cần hỗ trợ thủ tục gì hôm nay?"
+        async def _greeting_stream():
+            yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
+            yield f"data: {json.dumps({'type': 'mode', 'data': 'ai'})}\n\n"
+            for part in _split_static_stream_text(_greeting_reply):
+                yield f"data: {json.dumps({'type': 'token', 'data': part})}\n\n"
+            from app.utils.data_crypto import mask_pii as _mask_pii
+            assistant_msg = Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content=_greeting_reply,
+                answer_mode="ai",
+                citations=[],
+                tokens_used=max(1, len(_greeting_reply) // 4),
+                latency_ms=0,
+            )
+            conversation.updated_at = datetime.utcnow()
+            db.add(assistant_msg)
+            await db.flush()
+            db.add(UsageLog(
+                conversation_id=conversation.id,
+                message_id=assistant_msg.id,
+                query_text=_mask_pii(req.query[:500]),
+                answer_mode="ai",
+                tokens_used=max(1, len(_greeting_reply) // 4),
+                latency_ms=0,
+                is_rag=False,
+                retrieved_chunks=0,
+            ))
+            await db.commit()
+            yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(_greeting_reply) // 4), 'latency_ms': 0}})}\n\n"
+        return _streaming_response(_greeting_stream)
+
     # Từ chối ngay nếu câu hỏi rõ ràng ngoài lĩnh vực hành chính/pháp lý
     if is_out_of_domain(req.query) and not is_greeting_query(req.query):
         ood_text = out_of_domain_reply()

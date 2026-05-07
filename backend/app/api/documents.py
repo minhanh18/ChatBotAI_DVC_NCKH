@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import uuid
 from datetime import datetime
@@ -93,7 +94,8 @@ async def upload_document(
     if size_mb > settings.MAX_UPLOAD_SIZE_MB:
         raise HTTPException(400, f"File quá lớn. Tối đa {settings.MAX_UPLOAD_SIZE_MB}MB")
 
-    file_hash = compute_file_hash(content)
+    # Offload CPU-bound hash computation to thread pool to avoid blocking the event loop
+    file_hash = await asyncio.to_thread(compute_file_hash, content)
     normalized_name = normalize_document_name(file.filename or "")
     source_url = resolve_document_source_url(file.filename or "", {})
 
@@ -121,7 +123,8 @@ async def upload_document(
 
     doc_id = str(uuid.uuid4())
     file_path = Path(settings.UPLOAD_DIR) / f"{doc_id}.{ext}"
-    file_path.write_bytes(content)
+    # Offload blocking disk I/O to thread pool to avoid freezing the event loop
+    await asyncio.to_thread(file_path.write_bytes, content)
 
     doc_meta = build_document_meta(
         file_hash=file_hash,

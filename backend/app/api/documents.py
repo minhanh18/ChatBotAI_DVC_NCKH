@@ -137,6 +137,7 @@ async def upload_document(
         dataset_id=UUID(dataset_id),
         name=file.filename or f"document_{doc_id}",
         file_path=str(file_path),
+        file_content=content,   # lưu bytes vào DB để serve khi file_path mất trên ephemeral fs
         file_type=ext,
         file_size=len(content),
         status="pending",
@@ -333,6 +334,30 @@ async def serve_document_file(
                 file_path = candidate
 
     if not file_path or not file_path.exists():
+        # Fallback 3: serve trực tiếp từ DB bytes (file bị mất do ephemeral filesystem)
+        if doc.file_content:
+            media_type = mimetypes.guess_type(doc.name)[0] or "application/octet-stream"
+            if request.method == "HEAD":
+                from starlette.responses import Response
+                return Response(
+                    status_code=200,
+                    headers={
+                        "Content-Type": media_type,
+                        "Content-Length": str(len(doc.file_content)),
+                        "Content-Disposition": "inline",
+                        "Cache-Control": "private, max-age=3600",
+                    },
+                )
+            from starlette.responses import Response as BytesResponse
+            return BytesResponse(
+                content=doc.file_content,
+                media_type=media_type,
+                headers={
+                    "Content-Disposition": f'inline; filename="{doc.name}"',
+                    "Cache-Control": "private, max-age=3600",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
         raise HTTPException(404, "File không tồn tại trên server")
 
     media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"

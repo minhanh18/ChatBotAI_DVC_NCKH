@@ -54,6 +54,11 @@ async def startup():
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # Migration: thêm cột file_content nếu chưa có (ephemeral fs workaround)
+        await conn.execute(text("""
+            ALTER TABLE documents
+            ADD COLUMN IF NOT EXISTS file_content BYTEA
+        """))
     logger.info("✓ Database ready")
     logger.info("✓ %s v%s started", settings.APP_NAME, settings.APP_VERSION)
 

@@ -7,7 +7,7 @@ import uuid
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger, Boolean, Column, DateTime, Float, ForeignKey,
-    Integer, String, Text, UniqueConstraint, func,
+    Integer, LargeBinary, String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -68,6 +68,7 @@ class Document(Base):
     dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(500), nullable=False)
     file_path = Column(String(1000), nullable=True)
+    file_content = Column(LargeBinary, nullable=True)   # lưu bytes để serve khi file_path mất (ephemeral fs)
     file_type = Column(String(50), nullable=True)
     file_size = Column(BigInteger, default=0)
     # pending | indexing | ready | error

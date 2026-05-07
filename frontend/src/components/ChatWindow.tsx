@@ -1033,7 +1033,7 @@ export function ChatWindow({
             </div>
 
             <div className={`mt-1.5 text-center ${compactUi ? 'text-[11px]' : 'text-[11px]'} ${isUserUi ? 'text-[#967567]' : 'text-[#967567]'}`}>
-              {isUserUi ? 'AI có thể mắc sai lầm.' : 'AI có thể mắc sai lầm.'}
+              {isUserUi ? 'Trợ lý AI có thể mắc sai lầm. Vui lòng gọi tổng đài 1800 1096 (miễn phí) để được hỗ trợ chính xác.' : 'Trợ lý AI có thể mắc sai lầm. Vui lòng gọi tổng đài 1800 1096 (miễn phí) để được hỗ trợ chính xác.'}
             </div>
           </div>
         </div>

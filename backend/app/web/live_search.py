@@ -71,6 +71,9 @@ PRIORITY_DOMAINS = [
     "vbpl.vn",
     "luatvietnam.vn",
     "thuvienphapluat.vn",
+    "gdt.gov.vn",       # Tổng cục thuế
+    "mof.gov.vn",       # Bộ Tài chính
+    "tracuuthue.gdt.gov.vn",
 ]
 
 BLOCKED_URL_PATTERNS = [
@@ -417,6 +420,11 @@ def build_search_queries(query: str) -> list[str]:
         variants.extend([
             f"site:dichvucong.gov.vn {base}",
             f"{base} biểu mẫu hồ sơ dichvucong.gov.vn",
+        ])
+    if any(k in base_l for k in ["thuế", "tncn", "thu nhập", "khai thuế", "quyết toán", "tính thuế"]):
+        variants.extend([
+            f"site:gdt.gov.vn {base}",
+            f"site:luatvietnam.vn {base}",
         ])
     if should_prioritize_fresh_web_context(base):
         variants.extend([
@@ -787,6 +795,9 @@ def priority_domains_for_query(query: str) -> list[str]:
     if any(token in query_l for token in ["bảo hiểm", "bhyt", "bhxh"]):
         preferred = ["baohiemxahoi.gov.vn", "chinhphu.vn", "vbpl.vn", "luatvietnam.vn", "thuvienphapluat.vn", "dichvucong.gov.vn"]
         domains = preferred + [d for d in domains if d not in preferred]
+    if any(token in query_l for token in ["thuế", "tncn", "thu nhập", "khai thuế", "quyết toán thuế", "tính thuế"]):
+        preferred = ["gdt.gov.vn", "mof.gov.vn", "luatvietnam.vn", "vbpl.vn", "chinhphu.vn", "thuvienphapluat.vn"]
+        domains = preferred + [d for d in domains if d not in preferred]
     return domains
 
 
@@ -794,7 +805,7 @@ def score_domain_reliability(domain: str, query: str, title: str = "") -> float:
     domain = (domain or "").lower()
     if not domain:
         return 0.40
-    gov_domains = ["dichvucong.gov.vn", "bocongan.gov.vn", "chinhphu.vn", "baohiemxahoi.gov.vn", "vbpl.vn"]
+    gov_domains = ["dichvucong.gov.vn", "bocongan.gov.vn", "chinhphu.vn", "baohiemxahoi.gov.vn", "vbpl.vn", "gdt.gov.vn", "mof.gov.vn"]
     if any(domain == d or domain.endswith(f".{d}") for d in gov_domains):
         score = 0.90
     elif "luatvietnam.vn" in domain:

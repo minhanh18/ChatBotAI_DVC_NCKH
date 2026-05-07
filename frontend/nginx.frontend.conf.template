@@ -34,12 +34,8 @@ server {
         proxy_cache off;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
-        chunked_transfer_encoding on;
-        # Tắt request buffering: nginx stream thẳng request body lên backend
-        # thay vì buffer toàn bộ file vào disk trước. Giảm đáng kể thời gian
-        # upload file lớn và tránh lỗi timeout khi file >50MB.
-        proxy_request_buffering off;
         client_body_timeout 1200s;
+        chunked_transfer_encoding on;
     }
 
     gzip on;

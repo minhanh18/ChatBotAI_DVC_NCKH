@@ -85,7 +85,8 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
 
         const firstId = (conversationsData as any[])[0]?.id;
         if (firstId) {
-          await loadConversationDetail(firstId);
+          // Defer conversation detail load — không block render dashboard chính
+          setTimeout(() => { if (mounted) loadConversationDetail(firstId); }, 0);
         }
       } catch (err: any) {
         if (!mounted) return;

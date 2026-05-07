@@ -129,7 +129,10 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
     try {
       const docs = await getDocuments(datasetId, auth);
       setDocuments(docs.map((doc) => ({ ...doc, error_message: normalizeDocumentErrorMessage(doc.error_message) })));
+      setError('');
     } catch (err: any) {
+      // Không xóa documents state khi polling gặp lỗi tạm thời (500/502)
+      // Chỉ hiện error message, giữ nguyên danh sách tài liệu đang hiển thị
       setError(err.message || 'Không thể tải tài liệu');
     }
   };

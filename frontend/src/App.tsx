@@ -202,9 +202,9 @@ export default function App() {
       </nav>
 
       <div className="flex-1 overflow-hidden">
-        {tab === 'chat' && <ChatWindow sessionScope="admin" adminMode />}
-        {tab === 'documents' && <DocumentsPanel auth={adminAuth} />}
-        {tab === 'admin' && <AdminDashboard auth={adminAuth} />}
+        <div className={tab === 'chat' ? 'h-full' : 'hidden'}><ChatWindow sessionScope="admin" adminMode /></div>
+        <div className={tab === 'documents' ? 'h-full' : 'hidden'}><DocumentsPanel auth={adminAuth} /></div>
+        <div className={tab === 'admin' ? 'h-full' : 'hidden'}><AdminDashboard auth={adminAuth} /></div>
       </div>
     </div>
   );

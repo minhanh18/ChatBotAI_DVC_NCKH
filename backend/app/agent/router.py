@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.chat.evaluator import assess_retrieval, is_greeting_query
+from app.chat.evaluator import assess_retrieval, is_greeting_query, is_chitchat_query
 from app.rag.retriever import RetrievedChunk, retriever
 
 logger = logging.getLogger(__name__)
@@ -55,12 +55,13 @@ class AgentRouter:
         vì yêu cầu của hệ thống là luôn kiểm tra nguồn nội bộ trước. Ngoại lệ:
         endpoint ảnh đã tạo decision AI riêng, không đi qua router này.
         """
-        if is_greeting_query(query):
+        if is_greeting_query(query) or is_chitchat_query(query):
+            reason = "chitchat" if is_chitchat_query(query) else "greeting"
             return RouteDecision(
                 AnswerMode.AI,
                 [],
-                reason="greeting",
-                assessment={"reason": "greeting", "confidence": "high", "rag_first_checked": False},
+                reason=reason,
+                assessment={"reason": reason, "confidence": "high", "rag_first_checked": False},
             )
 
         has_docs = await self._has_indexed_documents(db, dataset_id=dataset_id)

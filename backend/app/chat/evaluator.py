@@ -31,12 +31,32 @@ GREETING_PATTERNS = [
     r"^\s*(chào\s*ad|alo|a\s*lô)\s*[!.?… ]*$",
 ]
 
+# Các mẫu chitchat: cảm ơn, tạm biệt, biểu đạt cảm xúc, xác nhận
+CHITCHAT_PATTERNS = [
+    r"^\s*(cảm\s*ơn|cám\s*ơn|thanks?|thank\s*you|cảm\s*ơn\s*bạn|cảm\s*ơn\s*nhiều)\s*[!.?… ]*$",
+    r"^\s*(tạm\s*biệt|bye|goodbye|gặp\s*lại)\s*[!.?… ]*$",
+    r"^\s*(ok|oke|okay|được\s*rồi|hiểu\s*rồi|rõ\s*rồi|ừ|uh|vâng|dạ)\s*[!.?… ]*$",
+    r"^\s*(hay\s*đó|tốt|tốt\s*lắm|tuyệt|tuyệt\s*vời|ngon|đỉnh|hữu\s*ích)\s*[!.?… ]*$",
+    r"^\s*(mệt\s*quá|mệt\s*rồi|khó\s*quá|phức\s*tạp\s*quá|rối\s*quá|stress)\s*[!.?!… ]*$",
+    r"^\s*(bực\s*quá|bực\s*mình|khó\s*chịu|chán\s*quá|thất\s*vọng)\s*[!.?!… ]*$",
+    r"^\s*(không\s*hiểu|chưa\s*hiểu|vẫn\s*chưa\s*hiểu|hả)\s*[!.?… ]*$",
+    r"^\s*(ừ\s*nhỉ|ờ\s*nhỉ|ừ\s*đúng|vậy\s*à|thế\s*à|ồ|ôi)\s*[!.?… ]*$",
+]
+
 
 def is_greeting_query(query: str) -> bool:
     q = (query or "").strip().lower()
     if not q:
         return False
     return any(re.match(pattern, q) for pattern in GREETING_PATTERNS)
+
+
+def is_chitchat_query(query: str) -> bool:
+    """Phát hiện các câu hỏi/phát biểu ngắn mang tính chitchat (cảm ơn, biểu đạt cảm xúc, xác nhận...)."""
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    return any(re.match(pattern, q) for pattern in CHITCHAT_PATTERNS)
 
 
 @dataclass
@@ -180,12 +200,13 @@ def assess_retrieval(
     avg = (sum(scores) / len(scores)) if scores else 0.0
     distinct_documents = len({chunk.document_id for chunk in chunks})
     greeting = is_greeting_query(query)
+    chitchat = is_chitchat_query(query)
     legal = is_legal_query(query)
     procedure = is_procedure_query(query)
     freshness = needs_freshness_check(query)
     max_overlap = _max_keyword_overlap(query, chunks)
 
-    if greeting:
+    if greeting or chitchat:
         return RetrievalAssessment(
             mode=mode_hint.value if hasattr(mode_hint, "value") else str(mode_hint or "auto"),
             chunk_count=0,
@@ -196,7 +217,7 @@ def assess_retrieval(
             should_use_rag=False,
             should_force_web=False,
             should_refuse_precise=False,
-            reason="greeting",
+            reason="chitchat" if chitchat else "greeting",
             authority_hint=None,
         )
 

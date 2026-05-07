@@ -27,6 +27,7 @@ from app.agent.router import AnswerMode, RouteDecision
 from app.chat.evaluator import (
     build_safe_fallback_answer,
     is_greeting_query,
+    is_chitchat_query,
     is_legal_query,
     is_procedure_query,
 )
@@ -228,7 +229,9 @@ def _build_rag_prompt(context: str, query: str, domain_instructions: str) -> str
 ### Quy tắc sử dụng tài liệu
 - Chỉ trả lời dựa trên ngữ cảnh tài liệu được cung cấp bên dưới. Không bịa thêm.
 - Nếu không tìm thấy thông tin trong ngữ cảnh, trả về đúng chuỗi [[RAG_NO_ANSWER]] và không viết gì thêm.
-- **Giữ NGUYÊN VẸN tất cả các bước** có trong tài liệu — không bỏ sót bước nào.
+- **Xác định rõ phạm vi câu hỏi trước khi trả lời:**
+  - Người dùng hỏi **toàn bộ thủ tục** → **Giữ NGUYÊN VẸN tất cả các bước** có trong tài liệu, không bỏ sót bước nào.
+  - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, không liệt kê bước thực hiện, không thêm lưu ý không liên quan đến câu hỏi.
 - **Giữ NGUYÊN các đường link** trong tài liệu, đặt link đúng tại bước tương ứng.
 - Không lặp lại tên tài liệu trong nội dung trả lời (tên đã hiển thị ở khu vực Tham khảo thêm).
 - Không dùng đuôi .pdf trong tên tài liệu. Dẫn nhập tự nhiên: "Theo thông tin trong ...".
@@ -1565,15 +1568,15 @@ class ChatEngine:
         logger.info("chunks_count = %s", len(decision.chunks or []))
         try:
             assessment = decision.assessment or {}
-            is_greeting = decision.reason == "greeting" or is_greeting_query(query)
+            is_greeting = decision.reason in ("greeting", "chitchat") or is_greeting_query(query) or is_chitchat_query(query)
 
             if is_greeting and image_part is None:
                 response_mode = AnswerMode.AI
                 yield _sse(StreamEvent("mode", response_mode.value))
 
-                greeting_text = "Xin chào! Tôi có thể giúp gì cho bạn hôm nay?"
-                async for event in _stream_static_text(greeting_text):
-                    full_text += str(event.data)
+                async for event in self._stream_contextual_chitchat(query, history):
+                    if event.type == "token":
+                        full_text += str(event.data)
                     yield _sse(event)
 
             elif (
@@ -1867,6 +1870,44 @@ class ChatEngine:
         except Exception as e:
             logger.exception("Chat engine error: %s", e)
             yield _sse(StreamEvent("error", str(e)))
+
+    async def _stream_contextual_chitchat(
+        self,
+        query: str,
+        history: list[Message],
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """
+        Sinh phản hồi chitchat/greeting phù hợp ngữ cảnh hội thoại bằng LLM.
+        Đọc lịch sử để hiểu mood user và trả lời tự nhiên, ấm áp.
+        """
+        system_prompt = (
+            f"{_get_identity()}\n\n"
+            "## Nhiệm vụ hiện tại\n"
+            "Người dùng vừa gửi một tin nhắn mang tính xã giao (chào hỏi, cảm ơn, bày tỏ cảm xúc, "
+            "xác nhận, v.v.). Hãy đọc lịch sử hội thoại (nếu có) và phản hồi **tự nhiên, ngắn gọn, ấm áp**.\n\n"
+            "## Nguyên tắc phản hồi\n"
+            "- Nếu là **lần đầu chào hỏi** (không có lịch sử): chào lại thân thiện, giới thiệu mình có thể giúp gì.\n"
+            "- Nếu người dùng **cảm ơn**: đáp lại tự nhiên, có thể hỏi họ còn cần giúp gì không.\n"
+            "- Nếu người dùng **bày tỏ mệt mỏi / bực bội / khó hiểu**: đồng cảm, xoa dịu, động viên nhẹ nhàng, "
+            "gợi ý tiếp tục hoặc đặt câu hỏi đơn giản hơn. KHÔNG hỏi lại 'bạn muốn hỏi về chủ đề nào'.\n"
+            "- Nếu người dùng **xác nhận** (ok, được rồi, hiểu rồi): đáp lại ngắn, hỏi họ cần thêm gì không.\n"
+            "- Nếu người dùng **tạm biệt**: tạm biệt ấm áp, chúc họ thực hiện thủ tục thuận lợi.\n"
+            "- Luôn dùng 'bạn' xưng hô, giọng nhẹ nhàng, không cứng nhắc.\n"
+            "- **Không hỏi lại về chủ đề nào** khi người dùng chỉ nói chitchat đơn giản — hỏi ngược lại tạo cảm giác máy móc.\n"
+            "- Độ dài: 1-3 câu ngắn là đủ, không cần dài dòng.\n"
+        )
+        gemini_history = _build_history(history)
+        if gemini_history and gemini_history[0]["role"] == "user":
+            gemini_history[0]["parts"][0] = system_prompt + "\n\n" + gemini_history[0]["parts"][0]
+
+        def chat_factory():
+            return self._make_model().start_chat(history=gemini_history)
+
+        prompt_parts = system_prompt + "\n\n" + query if not gemini_history else query
+
+        async for text in _gemini_stream_in_thread(chat_factory, prompt_parts):
+            if text and not text.startswith("__usage__:"):
+                yield StreamEvent("token", text)
 
     async def _generate_rag_answer(
         self,

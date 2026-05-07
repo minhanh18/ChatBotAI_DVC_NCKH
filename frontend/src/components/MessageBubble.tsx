@@ -198,18 +198,21 @@ function linkifyInlinePageRefs(content: string, citations: Citation[]) {
   }
 
   // 4. Pattern ([N]) standalone — doc hoặc web citation ref
-  result = result.replace(/(?<!\[)\(\[(\d+)\]\)(?!\()/g, (match, nStr) => {
+  result = result.replace(/(?<!\[)\(\[(\d+)\],?\s*\)(?!\()/g, (match, nStr) => {
     const n = parseInt(nStr, 10);
     if (n <= docCount) {
       const doc = nthDocumentCitation(citations, n);
-      if (!doc?.document_id) return match;
+      if (!doc?.document_id) return '';   // strip nếu không có doc
       return `[([${n}])](/api/documents/${doc.document_id}/file)`;
     } else {
       const web = webCitations[n - docCount - 1];
-      if (!web?.url) return match;
+      if (!web?.url) return '';   // strip nếu không có web source
       return `[([${n}])](${web.url})`;
     }
   });
+
+  // 5. Dọn sạch mọi ([N]) hoặc ([N],) còn sót lại không được chuyển thành link
+  result = result.replace(/\s*\(\[\d+\],?\s*\)(?!\s*trang)/gi, '');
 
   return result;
 }

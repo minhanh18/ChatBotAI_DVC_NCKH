@@ -159,31 +159,32 @@ async def upload_document(
     await db.commit()
 
     async def _save_file_content_to_db(doc_id: str, content: bytes) -> None:
-        """Lưu bytes vào DB sau khi response đã trả về — tránh timeout."""
+        """Lưu bytes vào DB sau khi response đã trả về — tránh timeout.
+        Dùng retry đơn giản vì Render Postgres đôi khi cần vài giây sau commit đầu tiên.
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
         from app.models.db import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
+        for attempt in range(3):
             try:
-                d = (await session.execute(
-                    select(Document).where(Document.id == UUID(doc_id))
-                )).scalar_one_or_none()
-                if d:
-                    d.file_content = content
-                    await session.commit()
+                async with AsyncSessionLocal() as session:
+                    d = (await session.execute(
+                        select(Document).where(Document.id == UUID(doc_id))
+                    )).scalar_one_or_none()
+                    if d:
+                        d.file_content = content
+                        await session.commit()
+                return  # thành công, thoát vòng lặp
             except Exception as _e:
-                import logging as _logging
-                _logging.getLogger(__name__).warning("Không lưu được file_content: %s", _e)
+                _log.warning("Không lưu được file_content (lần %d/3): %s", attempt + 1, _e)
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)  # backoff: 1s rồi 2s
 
-    async def _run_ingest_isolated(doc_id: str) -> None:
-        """Chạy ingest trong thread riêng để không block uvicorn event loop."""
-        import asyncio as _asyncio
-        await _asyncio.to_thread(_run_ingest_sync, doc_id)
-
-    def _run_ingest_sync(doc_id: str) -> None:
-        import asyncio as _asyncio
-        _asyncio.run(ingest_document(doc_id))
-
+    # ingest_document là async — gọi trực tiếp trong cùng event loop của uvicorn.
+    # KHÔNG dùng asyncio.to_thread + asyncio.run(): tạo event loop mới trong thread
+    # sẽ làm hỏng connection pool asyncpg → document kẹt mãi ở "pending".
     background_tasks.add_task(_save_file_content_to_db, doc_id, content)
-    background_tasks.add_task(_run_ingest_isolated, doc_id)
+    background_tasks.add_task(ingest_document, doc_id)
 
     return {
         "id": doc_id,

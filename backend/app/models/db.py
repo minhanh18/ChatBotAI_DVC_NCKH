@@ -16,15 +16,24 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 from app.config import settings
 
 # ── Engine ────────────────────────────────────────────────────────────────────
+# Render Postgres free tier đóng idle connection sau ~240s (4 phút).
+# pool_recycle=180 đảm bảo connection bị recycle trước khi server đóng.
+# connect_args với ssl="require" + statement_timeout tránh connection treo.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    # Render free tier: giới hạn 25 connections tổng cộng
     pool_size=3,
     max_overflow=3,
-    pool_recycle=300,        # recycle sau 5 phút thay vì 30 phút — tránh stale DNS
-    pool_pre_ping=True,      # kiểm tra connection còn sống trước khi dùng
+    pool_recycle=180,           # recycle mỗi 3 phút — trước khi Render đóng idle (4 phút)
+    pool_pre_ping=True,
     pool_timeout=30,
     echo=settings.DEBUG,
+    connect_args={
+        "ssl": "require",
+        "server_settings": {
+            "statement_timeout": "30000",       # 30s timeout per statement
+            "idle_in_transaction_session_timeout": "60000",  # 60s idle-in-transaction
+        },
+    },
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -71,10 +80,9 @@ class Document(Base):
     dataset_id = Column(UUID(as_uuid=True), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(500), nullable=False)
     file_path = Column(String(1000), nullable=True)
-    file_content = Column(LargeBinary, nullable=True)   # lưu bytes để serve khi file_path mất (ephemeral fs)
+    file_content = Column(LargeBinary, nullable=True)   # backup bytes — serve khi ephemeral fs mất file
     file_type = Column(String(50), nullable=True)
     file_size = Column(BigInteger, default=0)
-    # pending | indexing | ready | error
     status = Column(String(20), default="pending", nullable=False)
     error_message = Column(Text, nullable=True)
     chunk_count = Column(Integer, default=0)
@@ -93,10 +101,9 @@ class DocumentSegment(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
     dataset_id = Column(UUID(as_uuid=True), nullable=False)
-    position = Column(Integer, nullable=False)          # Thứ tự chunk trong tài liệu
+    position = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     word_count = Column(Integer, default=0)
-    # Vector embedding (768 dim — Google text-embedding-004)
     embedding = Column(Vector(settings.EMBEDDING_DIMENSION), nullable=True)
     meta = Column(JSONB, default=dict)
     created_at = Column(DateTime, default=now_utc, nullable=False)
@@ -113,7 +120,6 @@ class Conversation(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String(500), default="Hội thoại mới")
-    # Metadata của session người dùng (không cần auth phức tạp)
     session_key = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime, default=now_utc, nullable=False)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc, nullable=False)
@@ -127,14 +133,10 @@ class Message(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
-    # user | assistant
     role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
-    # rag | ai_search | direct — được set bởi agent router
     answer_mode = Column(String(20), nullable=True)
-    # Danh sách citations nếu là RAG response
     citations = Column(JSONB, default=list)
-    # Số token dùng
     tokens_used = Column(Integer, default=0)
     latency_ms = Column(Integer, default=0)
     created_at = Column(DateTime, default=now_utc, nullable=False)
@@ -145,8 +147,6 @@ class Message(Base):
 # ══════════════════════════════════════════════════════════════════════════════
 #  ADMIN / MONITORING MODELS
 # ══════════════════════════════════════════════════════════════════════════════
-
-
 
 class MessageFeedback(Base):
     """Phản hồi like / dislike cho câu trả lời của bot."""

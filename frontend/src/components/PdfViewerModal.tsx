@@ -34,25 +34,36 @@ export function PdfViewerModal({
   // iframeUrl: giữ nguyên fragment #page=N nếu có — để iframe scroll đúng trang
   const iframeUrl = url;
 
+  const [errorDetail, setErrorDetail] = useState<{message: string; hint?: string} | null>(null);
+
   // Kiểm tra URL và xác định loại file từ Content-Type thực tế của server
   useEffect(() => {
     setLoading(true);
     setError(false);
+    setErrorDetail(null);
     setResolvedIsPdf(false);
     fetch(baseUrl, { method: 'HEAD' })
-      .then((res) => {
+      .then(async (res) => {
         if (!res.ok) {
+          // Thử đọc error detail từ backend (JSON)
+          try {
+            const body = await fetch(baseUrl, { method: 'GET' }).then(r => r.json());
+            if (body?.detail?.message) {
+              setErrorDetail({ message: body.detail.message, hint: body.detail.hint });
+            } else {
+              setErrorDetail(null);
+            }
+          } catch { setErrorDetail(null); }
           setError(true);
         } else {
           const ct = res.headers.get('content-type') || '';
-          // Xác định có phải PDF không từ Content-Type thực tế hoặc fileType prop
           const isPdfByContentType = ct.includes('pdf');
           const isPdfByProp = fileType?.toLowerCase() === 'pdf';
           const isPdfByName = baseUrl.toLowerCase().endsWith('.pdf');
           setResolvedIsPdf(isPdfByContentType || isPdfByProp || isPdfByName);
         }
       })
-      .catch(() => setError(true))
+      .catch(() => { setError(true); setErrorDetail(null); })
       .finally(() => setLoading(false));
   }, [baseUrl, fileType]);
 
@@ -130,21 +141,30 @@ export function PdfViewerModal({
               <FileText size={40} className="text-[#d4a899]" />
               <div>
                 <p className="text-sm font-medium text-[#5a3825] mb-1">
-                  Không thể hiển thị tài liệu trong cửa sổ này
+                  {errorDetail ? 'File gốc không còn trên server' : 'Không thể hiển thị tài liệu'}
                 </p>
-                <p className="text-xs text-[#9a7060]">
-                  Tài liệu có thể ở định dạng không hỗ trợ xem trực tiếp.
+                <p className="text-xs text-[#9a7060] max-w-xs">
+                  {errorDetail
+                    ? (errorDetail.hint || errorDetail.message)
+                    : 'Tài liệu có thể ở định dạng không hỗ trợ xem trực tiếp.'}
                 </p>
+                {errorDetail && (
+                  <p className="text-xs text-green-600 mt-2 font-medium">
+                    ✓ Tài liệu vẫn đang hoạt động cho tính năng hỏi đáp AI.
+                  </p>
+                )}
               </div>
-              <a
-                href={baseUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#b27454] text-white text-sm hover:bg-[#9e6040] transition-colors"
-              >
-                <ExternalLink size={13} />
-                Mở trong tab mới
-              </a>
+              {!errorDetail && (
+                <a
+                  href={baseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#b27454] text-white text-sm hover:bg-[#9e6040] transition-colors"
+                >
+                  <ExternalLink size={13} />
+                  Mở trong tab mới
+                </a>
+              )}
             </div>
           )}
 

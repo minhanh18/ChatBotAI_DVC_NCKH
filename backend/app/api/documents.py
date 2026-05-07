@@ -139,10 +139,7 @@ async def upload_document(
         dataset_id=UUID(dataset_id),
         name=file.filename or f"document_{doc_id}",
         file_path=str(file_path),
-        # Lưu ngay file_content trong cùng transaction — loại bỏ hoàn toàn race condition.
-        # Bytes đã có trong RAM (biến content), không tốn I/O thêm.
-        # Ingestor luôn có thể restore file khi ephemeral fs mất dữ liệu sau sleep/restart.
-        file_content=content,
+        file_content=None,   # sẽ được lưu sau commit metadata để tránh timeout với file lớn
         file_type=ext,
         file_size=len(content),
         status="pending",
@@ -158,7 +155,27 @@ async def upload_document(
         })
         previous_doc.meta = prev_meta
 
+    # Commit 1: chỉ metadata — nhanh, tránh timeout khi file lớn
     await db.commit()
+
+    # Commit 2: lưu file_content trong session mới — tách biệt để không block ingest
+    # File đã được ghi ra disk ở trên nên ingestor có thể bắt đầu ngay.
+    # Nếu commit 2 fail (hiếm), ingestor vẫn dùng được file trên disk.
+    async def _save_content_bg(doc_id_: str, data: bytes) -> None:
+        from app.models.db import AsyncSessionLocal as _Session
+        try:
+            async with _Session() as s:
+                d = (await s.execute(
+                    select(Document).where(Document.id == UUID(doc_id_))
+                )).scalar_one_or_none()
+                if d:
+                    d.file_content = data
+                    await s.commit()
+        except Exception as _e:
+            import logging as _log
+            _log.getLogger(__name__).warning("Không lưu được file_content cho %s: %s", doc_id_, _e)
+
+    asyncio.create_task(_save_content_bg(doc_id, content))
 
     # Ingest chạy concurrently — không block response, không block request khác
     asyncio.create_task(ingest_document(doc_id))
@@ -365,7 +382,18 @@ async def serve_document_file(
                     "X-Content-Type-Options": "nosniff",
                 },
             )
-        raise HTTPException(404, "File không tồn tại trên server — vui lòng upload lại tài liệu")
+        # Document cũ (trước khi có cột file_content) hoặc file_content=NULL
+        # Trả về thông tin document để frontend có thể hiển thị metadata thay vì 404 blank
+        raise HTTPException(
+            404,
+            detail={
+                "message": "File gốc không còn trên server (ephemeral filesystem đã reset sau sleep).",
+                "hint": "Tài liệu đã được index và vẫn dùng được cho RAG. Nếu cần xem file, hãy upload lại.",
+                "document_name": doc.name,
+                "document_status": doc.status,
+                "chunk_count": doc.chunk_count or 0,
+            }
+        )
 
     media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
 

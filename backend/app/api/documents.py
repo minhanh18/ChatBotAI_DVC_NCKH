@@ -137,7 +137,7 @@ async def upload_document(
         dataset_id=UUID(dataset_id),
         name=file.filename or f"document_{doc_id}",
         file_path=str(file_path),
-        file_content=content,   # lưu bytes vào DB để serve khi file_path mất trên ephemeral fs
+        file_content=None,      # sẽ được lưu bởi background task để không block response
         file_type=ext,
         file_size=len(content),
         status="pending",
@@ -154,6 +154,22 @@ async def upload_document(
         previous_doc.meta = prev_meta
 
     await db.commit()
+
+    async def _save_file_content_to_db(doc_id: str, content: bytes) -> None:
+        """Lưu bytes vào DB sau khi response đã trả về — tránh timeout."""
+        from app.models.db import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            try:
+                d = (await session.execute(
+                    select(Document).where(Document.id == UUID(doc_id))
+                )).scalar_one_or_none()
+                if d:
+                    d.file_content = content
+                    await session.commit()
+            except Exception as _e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning("Không lưu được file_content: %s", _e)
+
     async def _run_ingest_isolated(doc_id: str) -> None:
         """Chạy ingest trong thread riêng để không block uvicorn event loop."""
         import asyncio as _asyncio
@@ -163,6 +179,7 @@ async def upload_document(
         import asyncio as _asyncio
         _asyncio.run(ingest_document(doc_id))
 
+    background_tasks.add_task(_save_file_content_to_db, doc_id, content)
     background_tasks.add_task(_run_ingest_isolated, doc_id)
 
     return {

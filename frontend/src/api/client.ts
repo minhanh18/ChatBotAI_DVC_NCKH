@@ -265,7 +265,11 @@ export const getDocuments = (datasetId: string, auth: AdminAuth) =>
 export const uploadDocument = (datasetId: string, file: File, auth: AdminAuth) => {
   const fd = new FormData();
   fd.append('file', file);
-  return apiFetch(`/documents/datasets/${datasetId}/upload`, { method: 'POST', body: fd, headers: authHeaders(auth) });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000); // 2 phút timeout
+  return apiFetch(`/documents/datasets/${datasetId}/upload`, {
+    method: 'POST', body: fd, headers: authHeaders(auth), signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
 };
 
 export const renameDocument = (id: string, name: string, auth: AdminAuth) => {

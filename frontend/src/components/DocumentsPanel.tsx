@@ -295,7 +295,7 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
                   className="flex items-center gap-2 px-4 py-2 bg-[#a86a4f] hover:bg-[#945843] disabled:bg-[#d7b7a9] text-white text-sm rounded-2xl transition-colors"
                 >
                   {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                  Upload tài liệu
+                  {uploading ? 'Đang upload… (có thể mất vài phút)' : 'Upload tài liệu'}
                 </button>
               </div>
             </div>

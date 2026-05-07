@@ -177,7 +177,11 @@ class _GeminiKeyPool:
 
 _key_pool = _GeminiKeyPool()
 # Ghi đè cấu hình ban đầu (genai.configure đã được gọi một lần với primary key)
-genai.configure(api_key=_key_pool.current_key() or settings.GEMINI_API_KEY)
+_initial_key = _key_pool.current_key() or settings.GEMINI_API_KEY
+if _initial_key:
+    genai.configure(api_key=_initial_key)
+else:
+    logger.warning("GEMINI_API_KEY chưa được cấu hình — chat sẽ không hoạt động cho đến khi có key.")
 
 def _get_identity() -> str:
     """Phần định danh + phạm vi + nguyên tắc trực tuyến — dùng chung cho cả RAG và AI."""
@@ -1049,8 +1053,8 @@ def _strip_inline_source_links(text: str) -> str:
 
 
 _LEGAL_HEADER_RE = re.compile(
-    r'^(?:Điều\s+\d+\w*\.?\s*(?:[^0-9]{1,100})?)?'
-    r'(?:\d+\.\s+(?=[AĂÂÁẮẤÀẰẦẢẲẨÃẶẪĐEÊÉẾÈỀẺỂẼỆIÍÌỈĨỊOÔƠÓỐỚÒỒỜỎỔỞÕỖỠỌỘỢUƯÚỨÙỪỦỬŨỮỤYÝỲỶỸỴA-Z]))',
+    r'^(?:Điều\\s+\\d+\\w*\\.?\\s*(?:[^0-9]{1,100})?)?'
+    r'(?:\\d+\\.\\s+(?=[A-ZĐÁÀẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÉÈẺẼẸÊẾỀỂỄỆÍÌỈĨỊÓÒỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÚÙỦŨỤƯỨỪỬỮỰÝỲỶỸỴ]))',
     re.UNICODE,
 )
 

@@ -48,18 +48,30 @@ app.include_router(admin_router, prefix="/api")
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint cho Render — phải trả 200 để service không bị restart."""
+    return {"status": "ok", "version": settings.APP_VERSION}
+
+
 @app.on_event("startup")
 async def startup():
     """Tạo bảng và extension pgvector khi khởi động."""
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.run_sync(Base.metadata.create_all)
-        # Migration: thêm cột file_content nếu chưa có (ephemeral fs workaround)
-        await conn.execute(text("""
-            ALTER TABLE documents
-            ADD COLUMN IF NOT EXISTS file_content BYTEA
-        """))
-    logger.info("✓ Database ready")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.run_sync(Base.metadata.create_all)
+            # Migration: thêm cột file_content nếu chưa có (ephemeral fs workaround)
+            await conn.execute(text("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS file_content BYTEA
+            """))
+        logger.info("✓ Database ready")
+    except Exception as e:
+        # Không crash toàn bộ app khi DB lỗi — health check vẫn hoạt động
+        logger.error("✗ Database startup error (non-fatal): %s", e)
+
     logger.info("✓ %s v%s started", settings.APP_NAME, settings.APP_VERSION)
 
     # Background GC cho session cache (chạy mỗi 30 phút)

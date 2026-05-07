@@ -28,7 +28,21 @@ chunker = LegalAwareChunker(
 )
 
 
+INGEST_TIMEOUT_SECONDS = 600  # 10 phút — timeout cứng để tránh treo mãi mãi
+
+
 async def ingest_document(document_id: str) -> None:
+    try:
+        await asyncio.wait_for(_ingest_document_inner(document_id), timeout=INGEST_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.error("  ✗ ingest_document %s timeout sau %ds", document_id, INGEST_TIMEOUT_SECONDS)
+        async with AsyncSessionLocal() as db:
+            doc = (await db.execute(select(Document).where(Document.id == UUID(document_id)))).scalar_one_or_none()
+            if doc and doc.status in ("indexing", "pending"):
+                await _set_status(db, doc, "error", f"Xử lý quá thời gian ({INGEST_TIMEOUT_SECONDS}s). Vui lòng thử reindex lại.")
+
+
+async def _ingest_document_inner(document_id: str) -> None:
     # ── Bước 1: Đọc doc info, set status=indexing, rồi ĐÓNG connection ──────
     file_path: str | None = None
     doc_name: str = ""

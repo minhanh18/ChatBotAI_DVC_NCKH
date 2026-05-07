@@ -58,9 +58,12 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
   const [busyDocId, setBusyDocId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
-
+  // pollStartRef chỉ được set 1 lần khi bắt đầu polling, KHÔNG reset theo documents state
   const pollStartRef = useRef<number>(0);
-  const POLL_MAX_MS = 120_000; // dừng tối đa 2 phút
+  const isPollingRef = useRef<boolean>(false);
+  const [stuckDocIds, setStuckDocIds] = useState<Set<string>>(new Set());
+  const POLL_MAX_MS = 300_000; // timeout cứng 5 phút
+  const POLL_STUCK_MS = 120_000; // hiện cảnh báo "stuck" sau 2 phút
 
   useEffect(() => {
     loadDatasets();
@@ -72,21 +75,44 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
   }, [activeDataset]);
 
   useEffect(() => {
-    clearInterval(pollRef.current);
     const needsPoll = documents.some((d) => d.status === 'pending' || d.status === 'indexing');
     if (needsPoll && activeDataset) {
-      pollStartRef.current = Date.now();
-      pollRef.current = setInterval(() => {
-        const elapsed = Date.now() - pollStartRef.current;
-        if (elapsed > POLL_MAX_MS) {
-          clearInterval(pollRef.current);
-          logger.debug?.('Polling dừng do vượt quá 2 phút');
-          return;
-        }
-        loadDocumentsFor(activeDataset.id);
-      }, 3000);
+      // Chỉ bắt đầu interval MỚI nếu chưa đang poll
+      if (!isPollingRef.current) {
+        isPollingRef.current = true;
+        pollStartRef.current = Date.now();
+        clearInterval(pollRef.current);
+        pollRef.current = setInterval(() => {
+          const elapsed = Date.now() - pollStartRef.current;
+          if (elapsed > POLL_MAX_MS) {
+            clearInterval(pollRef.current);
+            isPollingRef.current = false;
+            // Đánh dấu tất cả doc còn pending/indexing là stuck
+            setStuckDocIds(new Set(
+              documents
+                .filter((d) => d.status === 'pending' || d.status === 'indexing')
+                .map((d) => d.id)
+            ));
+            return;
+          }
+          if (elapsed > POLL_STUCK_MS) {
+            // Sau 2 phút vẫn chưa xong → hiện cảnh báo stuck
+            setStuckDocIds(new Set(
+              documents
+                .filter((d) => d.status === 'pending' || d.status === 'indexing')
+                .map((d) => d.id)
+            ));
+          }
+          loadDocumentsFor(activeDataset.id);
+        }, 3000);
+      }
+    } else {
+      // Không còn doc nào đang xử lý → dừng poll và xóa stuck marks
+      clearInterval(pollRef.current);
+      isPollingRef.current = false;
+      if (stuckDocIds.size > 0) setStuckDocIds(new Set());
     }
-    return () => clearInterval(pollRef.current);
+    return () => {};
   }, [documents, activeDataset]);
 
   const loadDatasets = async () => {
@@ -316,7 +342,7 @@ export function DocumentsPanel({ auth }: { auth: AdminAuth }) {
               ) : (
                 <div className="grid gap-3 max-w-4xl">
                   {documents.map((doc) => (
-                    <DocumentCard key={doc.id} doc={doc} busy={busyDocId === doc.id} onDelete={handleDeleteDoc} onReindex={handleReindex} onRename={(doc) => { setRenamingDoc(doc); setRenameValue(doc.name); }} />
+                    <DocumentCard key={doc.id} doc={doc} busy={busyDocId === doc.id} stuck={stuckDocIds.has(doc.id)} onDelete={handleDeleteDoc} onReindex={handleReindex} onRename={(doc) => { setRenamingDoc(doc); setRenameValue(doc.name); }} />
                   ))}
                 </div>
               )}
@@ -368,26 +394,34 @@ function DocumentCard({
   onReindex,
   onRename,
   busy = false,
+  stuck = false,
 }: {
   doc: Document;
   busy?: boolean;
+  stuck?: boolean;
   onDelete: (id: string) => void;
   onReindex: (id: string) => void;
   onRename: (doc: Document) => void;
 }) {
-  const statusIcon = {
-    ready: <CheckCircle size={14} className="text-green-500" />,
-    indexing: <Loader2 size={14} className="text-indigo-500 animate-spin" />,
-    pending: <Clock size={14} className="text-amber-500" />,
-    error: <AlertCircle size={14} className="text-red-500" />,
-  }[doc.status];
+  const isStuck = (doc.status === 'indexing' || doc.status === 'pending') && stuck;
 
-  const statusText = {
-    ready: 'Sẵn sàng',
-    indexing: 'Đang xử lý...',
-    pending: 'Chờ xử lý',
-    error: 'Lỗi',
-  }[doc.status];
+  const statusIcon = isStuck
+    ? <AlertCircle size={14} className="text-orange-400" />
+    : {
+        ready: <CheckCircle size={14} className="text-green-500" />,
+        indexing: <Loader2 size={14} className="text-indigo-500 animate-spin" />,
+        pending: <Clock size={14} className="text-amber-500" />,
+        error: <AlertCircle size={14} className="text-red-500" />,
+      }[doc.status];
+
+  const statusText = isStuck
+    ? 'Xử lý quá lâu'
+    : {
+        ready: 'Sẵn sàng',
+        indexing: 'Đang xử lý...',
+        pending: 'Chờ xử lý',
+        error: 'Lỗi',
+      }[doc.status];
 
   const sizeStr = doc.file_size > 1024 * 1024
     ? `${(doc.file_size / (1024 * 1024)).toFixed(1)} MB`
@@ -408,6 +442,15 @@ function DocumentCard({
           <span>{doc.chunk_count} chunk</span>
         </div>
         {doc.error_message && <p className="text-xs text-red-500 mt-2">{normalizeDocumentErrorMessage(doc.error_message)}</p>}
+        {isStuck && !doc.error_message && (
+          <p className="text-xs text-orange-500 mt-2">
+            Xử lý quá lâu — hãy thử{' '}
+            <button onClick={() => onReindex(doc.id)} className="underline font-medium hover:text-orange-700">
+              reindex lại
+            </button>
+            .
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <div className="flex items-center gap-1.5 rounded-full px-2.5 py-1 bg-[#fff9f6] border border-[#ead8cf] text-xs text-[#8c6a5b]">

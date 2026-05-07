@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_TEMPERATURE: float = 0.3
-    GEMINI_MAX_OUTPUT_TOKENS: int = 16384
+    GEMINI_MAX_OUTPUT_TOKENS: int = 4096
     GEMINI_TOP_P: float = 0.8
 
     # ── Embedding ───────────────────────────────────────────
@@ -126,8 +126,8 @@ class Settings(BaseSettings):
     ENABLE_WEB_SEARCH: bool = True
     WEB_SEARCH_RESULTS_LIMIT: int = 5
     WEB_SEARCH_FETCH_PAGES: int = 3
-    WEB_SEARCH_TIMEOUT_SEC: float = 12.0
-    WEB_SEARCH_MAX_CONTEXT_CHARS: int = 1800
+    WEB_SEARCH_TIMEOUT_SEC: float = 8.0
+    WEB_SEARCH_MAX_CONTEXT_CHARS: int = 1200
 
     # ── Admin ──────────────────────────────────────────────
     ADMIN_USERNAME: str = "admin"

@@ -312,7 +312,7 @@ async def search_and_fetch(query: str) -> list[WebResult]:
     explicit_urls = extract_urls(query)
     async with httpx.AsyncClient(
         follow_redirects=True,
-        timeout=httpx.Timeout(settings.WEB_SEARCH_TIMEOUT_SEC),
+        timeout=httpx.Timeout(connect=5.0, read=settings.WEB_SEARCH_TIMEOUT_SEC, write=5.0, pool=5.0),
         headers={"User-Agent": USER_AGENT},
     ) as client:
         if explicit_urls:
@@ -348,9 +348,9 @@ async def search_and_fetch(query: str) -> list[WebResult]:
         logger.info("candidate_results total = %s", len(deduped))
         logger.info("candidate URLs = %s", [r.get("url") for r in deduped[:5]])
         ranked_candidates = sorted(deduped, key=lambda item: score_search_result(query, item), reverse=True)
-        fetch_limit = max(settings.WEB_SEARCH_FETCH_PAGES + 1, 5 if should_prioritize_fresh_web_context(query) else settings.WEB_SEARCH_FETCH_PAGES)
+        fetch_limit = settings.WEB_SEARCH_FETCH_PAGES
         tasks = []
-        for item in ranked_candidates[: fetch_limit * 2]:
+        for item in ranked_candidates[: fetch_limit + 1]:
             logger.info("Fetching page content: %s", item.get("url"))
             tasks.append(fetch_page_context(client, item["url"], item.get("title"), item.get("snippet", ""), query=query))
         fetched = await asyncio.gather(*tasks, return_exceptions=True)
@@ -416,18 +416,12 @@ def build_search_queries(query: str) -> list[str]:
     if any(k in base_l for k in ["thủ tục", "hồ sơ", "nộp", "đăng ký", "cấp", "dịch vụ công", "trực tuyến", "tạm trú", "căn cước", "khai sinh", "hộ kinh doanh"]):
         variants.extend([
             f"site:dichvucong.gov.vn {base}",
-            f"site:dichvucong.gov.vn \"{base}\"",
-            f"{base} Cổng Dịch vụ công Quốc gia",
-            f"{base} nộp hồ sơ trực tuyến dichvucong.gov.vn",
             f"{base} biểu mẫu hồ sơ dichvucong.gov.vn",
         ])
     if should_prioritize_fresh_web_context(base):
         variants.extend([
-            f"{base} mới nhất",
+            f"{base} mới nhất {year}",
             f"{base} hiện hành",
-            f"{base} còn hiệu lực không",
-            f"{base} cập nhật {date_vi}",
-            f"{base} {year}",
         ])
     ordered: list[str] = []
     seen: set[str] = set()

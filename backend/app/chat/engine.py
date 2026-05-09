@@ -234,7 +234,7 @@ def _build_rag_prompt(context: str, query: str, domain_instructions: str) -> str
   - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, không liệt kê bước thực hiện, không thêm lưu ý không liên quan đến câu hỏi.
 - **Giữ NGUYÊN các đường link** trong tài liệu, đặt link đúng tại bước tương ứng.
 - Không lặp lại tên tài liệu trong nội dung trả lời (tên đã hiển thị ở khu vực Tham khảo thêm).
-- Không dùng đuôi .pdf trong tên tài liệu. Dẫn nhập tự nhiên: "Theo thông tin trong ...".
+- Không dùng đuôi .pdf trong tên tài liệu. Không mở đầu câu trả lời bằng tên tài liệu (ví dụ: "Theo thông tin trong [tên tài liệu]...") — tên tài liệu đã hiển thị tự động ở khu vực Tham khảo thêm.
 
 ### Quy tắc trích dẫn số trang
 Mỗi đoạn trong ngữ cảnh được gắn nhãn [Tài liệu N] — N là số thứ tự tài liệu.
@@ -1262,6 +1262,15 @@ def _normalize_legal_answer_structure(text: str) -> str:
 
 
 def _ensure_rag_source_lead(text: str, citations: list[Citation]) -> str:
+    """
+    Chèn câu dẫn nhập tên tài liệu KHI VÀ CHỈ KHI tài liệu có hint lead được cấu hình sẵn
+    trong source_hints.py (đảm bảo tên tài liệu thực sự liên quan đến query).
+
+    KHÔNG chèn câu dẫn mặc định "Theo thông tin trong [tên tài liệu]..." nữa — vì:
+    - Tài liệu truy xuất được có thể không thực sự khớp câu hỏi (retriever lấy nhầm).
+    - Gemini đã được prompt không lặp tên tài liệu trong thân bài.
+    - Nếu câu trả lời đã có "Theo...", giữ nguyên không chèn thêm.
+    """
     if not text.strip():
         return text
     first_doc = next((citation for citation in citations if citation.source_type == "document"), None)
@@ -1270,15 +1279,15 @@ def _ensure_rag_source_lead(text: str, citations: list[Citation]) -> str:
 
     display_name = pretty_document_name(first_doc.document_name)
     hint = get_document_hint(display_name, {}) or {}
+    configured_lead = hint.get("lead")  # Chỉ dùng lead được cấu hình rõ ràng
+    if not configured_lead:
+        return text  # Không chèn lead mặc định — tránh nhắc tên tài liệu không liên quan
+
     lowered_head = text[:260].lower()
     if display_name.lower() in lowered_head or "theo thông tin trong" in lowered_head:
-        return text
+        return text  # Đã có dẫn nhập rồi
 
-    lead = str(
-        hint.get("lead")
-        or f"Theo thông tin trong tài liệu {display_name}, tôi trả lời câu hỏi của bạn như sau:"
-    ).strip()
-    return lead + "\n\n" + text.lstrip()
+    return str(configured_lead).strip() + "\n\n" + text.lstrip()
 
 
 _RAG_NO_ANSWER_MARKERS = (
@@ -1301,6 +1310,14 @@ _RAG_NO_ANSWER_MARKERS = (
     "không có thông tin nào về",
     "các tài liệu này tập trung vào",
     "tài liệu hiện có không chứa",
+    # Trường hợp Gemini mở đầu sai — lấy nhầm greeting/intro từ đầu tài liệu
+    "bạn muốn tìm hiểu thông tin gì về thủ tục hành chính",
+    "vui lòng cho tôi biết rõ hơn yêu cầu",
+    "để tôi có thể hỗ trợ bạn tốt nhất",
+    # Khi Gemini thấy tài liệu không liên quan và nói thẳng
+    "câu hỏi này không liên quan đến tài liệu",
+    "tài liệu không phù hợp với câu hỏi",
+    "ngữ cảnh được cung cấp không liên quan",
 )
 
 
@@ -1614,6 +1631,30 @@ class ChatEngine:
                         session_summary=get_session_summary(session_key) if session_key else None,
                     )
                     rag_text = _clean_response_text(rag_text, rag_citations)
+
+                    # Kiểm tra nếu Gemini mở đầu câu trả lời bằng tên tài liệu không liên quan
+                    # (ví dụ: "Theo thông tin trong sổ tay thuế..." khi user hỏi về tạm trú)
+                    # → coi là RAG không trả lời được → fallback web
+                    _head = rag_text[:300].lower()
+                    _doc_names_in_head = [
+                        c.document_name.lower() for c in rag_citations
+                        if c.source_type == "document" and c.document_name.lower() in _head
+                    ]
+                    _query_tokens = set(w for w in re.split(r"\s+", query.lower()) if len(w) >= 3)
+                    _doc_tokens_in_query = any(
+                        any(tok in query.lower() for tok in doc_name.split())
+                        for doc_name in _doc_names_in_head
+                    ) if _doc_names_in_head else True  # nếu không có tên doc trong câu → không ảnh hưởng
+
+                    _answer_irrelevant = (
+                        "xin chào" in _head or
+                        ("chào bạn" in _head and len(rag_text) < 500 and not any(
+                            kw in _head for kw in ["thủ tục", "đăng ký", "hồ sơ", "lệ phí", "luật", "nghị định"]
+                        ))
+                    )
+                    if _answer_irrelevant:
+                        logger.info("RAG trả lời lệch chủ đề (greeting/irrelevant); fallback web. query=%s", query)
+                        rag_text = "[[RAG_NO_ANSWER]]"
 
                     # Lưu chunks vào cache nếu RAG thành công
                     if session_key and effective_chunks and not _should_fallback_to_web_after_rag(query, rag_text):

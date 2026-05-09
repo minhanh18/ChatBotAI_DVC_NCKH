@@ -54,8 +54,14 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     user_msg = await _save_user_message(db, conversation, req.query)
     history = await _load_history(db, conversation.id, exclude_message_id=user_msg.id)
 
-    # Shortcut: câu chào hỏi → trả lời ngay, không RAG, không web search, không rewrite
-    if is_greeting_query(req.query):
+    # ── Chuẩn hóa query SỚM: không dấu/viết tắt/sai chính tả → tiếng Việt chuẩn.
+    # Phải chạy TRƯỚC greeting/OOD/clarification check vì các check đó dùng regex tiếng Việt.
+    # Ví dụ: "toi muon dk tam tru" → "Tôi muốn đăng ký tạm trú" trước khi check.
+    # Fail-safe: nếu rewrite lỗi/timeout thì giữ query gốc.
+    _normalized_query = await rewrite_query(req.query)
+
+    # Shortcut: câu chào hỏi → trả lời ngay, không RAG, không web search
+    if is_greeting_query(_normalized_query):
         _greeting_reply = "Xin chào! Tôi là trợ lý hỗ trợ thủ tục hành chính và dịch vụ công. Bạn cần hỗ trợ thủ tục gì hôm nay?"
         async def _greeting_stream():
             yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -90,7 +96,8 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         return _streaming_response(_greeting_stream)
 
     # Từ chối ngay nếu câu hỏi rõ ràng ngoài lĩnh vực hành chính/pháp lý
-    if is_out_of_domain(req.query) and not is_greeting_query(req.query):
+    # Từ chối ngay nếu câu hỏi rõ ràng ngoài lĩnh vực hành chính/pháp lý (check trên query đã chuẩn)
+    if is_out_of_domain(_normalized_query) and not is_greeting_query(_normalized_query):
         ood_text = out_of_domain_reply()
         async def _ood_stream():
             yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -124,7 +131,7 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(ood_text) // 4), 'latency_ms': 0}})}\n\n"
         return _streaming_response(_ood_stream)
 
-    clarification_text = _context_clarification_text(req.query, history)
+    clarification_text = _context_clarification_text(_normalized_query, history)
     if clarification_text:
         async def event_stream():
             yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -158,10 +165,9 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(clarification_text) // 4), 'latency_ms': 0}})}\n\n"
         return _streaming_response(event_stream)
 
-    effective_query = _resolve_effective_query(req.query, history)
-    # Chuẩn hóa query: không dấu, viết tắt, sai chính tả → tiếng Việt chuẩn
-    # Fail-safe: nếu lỗi/timeout thì vẫn dùng query gốc
-    effective_query = await rewrite_query(effective_query)
+    # Dùng query đã chuẩn hóa ở đầu hàm; _resolve_effective_query bổ sung context hội thoại
+    effective_query = _resolve_effective_query(_normalized_query, history)
+    # rewrite_query đã được gọi ở trên (_normalized_query), không cần gọi lại
 
     # Query sạch để dùng cho web search — bỏ prefix "Chủ đề hiện tại: X. Câu hỏi: "
     # để Tavily không bị lệch chủ đề tìm kiếm

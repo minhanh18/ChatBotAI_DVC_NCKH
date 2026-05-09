@@ -1,6 +1,6 @@
 # Trợ lý Thủ tục Hành chính Số
 
-Chatbot AI hỗ trợ công dân tra cứu thủ tục hành chính, quy định pháp luật và dịch vụ công trực tuyến.
+Chatbot AI hỗ trợ công dân tra cứu thủ tục hành chính, quy định pháp luật và dịch vụ công trực tuyến. Hệ thống sử dụng RAG (Retrieval-Augmented Generation) với Gemini AI, pgvector và web search song song.
 
 > Xem **[ARCHITECTURE.md](ARCHITECTURE.md)** để hiểu luồng hoạt động và kiến trúc hệ thống.  
 > Xem **[STRUCTURE.md](STRUCTURE.md)** để hiểu vai trò từng file trong dự án.
@@ -11,13 +11,13 @@ Chatbot AI hỗ trợ công dân tra cứu thủ tục hành chính, quy định
 
 - **Công dân/người dùng cuối**: đặt câu hỏi bằng ngôn ngữ tự nhiên, gửi ảnh, dùng giọng nói, xem nguồn trích dẫn và link thủ tục.
 - **Cán bộ/quản trị viên**: upload tài liệu, quản lý dataset, theo dõi hội thoại, xem phản hồi người dùng.
-- **Nhóm phát triển/vận hành**: triển khai hệ thống bằng Docker Compose, mở rộng RAG, tinh chỉnh prompt, embedding và luồng đánh giá nguồn.
+- **Nhóm phát triển/vận hành**: triển khai bằng Docker Compose, mở rộng RAG, tinh chỉnh prompt và luồng đánh giá.
 
 ---
 
-## 2. Bảng chức năng đầy đủ
+## 2. Chức năng hệ thống
 
-### 2.1 Người dùng cuối (Chat Interface)
+### 2.1 Người dùng cuối
 
 | Chức năng | Mô tả | Trạng thái |
 |-----------|-------|------------|
@@ -27,67 +27,50 @@ Chatbot AI hỗ trợ công dân tra cứu thủ tục hành chính, quy định
 | Streaming real-time | Câu trả lời xuất hiện từng từ theo SSE | ✅ |
 | Dừng phản hồi | Nút Stop khi câu trả lời đang được sinh | ✅ |
 | Gửi lại câu hỏi | Nút Reload để hỏi lại câu trước | ✅ |
-| Đánh giá câu trả lời | Like / Dislike kèm lý do | ✅ |
-| Nguồn tham khảo | Panel hiển thị tài liệu nội bộ + nguồn web (click mở PDF) | ✅ |
+| Đánh giá câu trả lời | Like / Chưa đúng kèm lý do | ✅ |
+| Nguồn tham khảo | Panel tài liệu nội bộ + nguồn web, click mở PDF | ✅ |
 | Link dịch vụ công | Panel "Đường link thao tác / hồ sơ" khi có URL thực | ✅ |
-| Căn cứ pháp lý | Hiển thị điều khoản liên quan ở gần cuối câu trả lời | ✅ |
-| Trích dẫn blockquote | Trích nguyên văn điều khoản pháp luật đúng quy tắc | ✅ |
+| Căn cứ pháp lý | Hiển thị điều khoản liên quan cuối câu trả lời | ✅ |
 | Click mở trang PDF | Số trang inline click được → mở modal PDF đúng trang | ✅ |
-| Launcher kéo thả | Widget chatbot nổi có thể kéo, mở thu nhỏ/toàn màn hình | ✅ |
+| Launcher kéo thả | Widget nổi có thể kéo, mở thu nhỏ/toàn màn hình | ✅ |
 | Ghi nhớ phiên | Session cache lưu chunks + rolling summary trong 2 giờ | ✅ |
-| Hỏi tiếp theo ngữ cảnh | Câu hỏi follow-up sử dụng chunks đã cache, giảm token | ✅ |
 
 ### 2.2 Xử lý AI & RAG
 
 | Chức năng | Mô tả | Trạng thái |
 |-----------|-------|------------|
 | RAG-first | Mọi câu hỏi ưu tiên tìm trong tài liệu nội bộ trước | ✅ |
-| HybridRetriever v3 | Kết hợp vector search + lexical SQL + BM25 + RRF | ✅ |
+| HybridRetriever | Kết hợp vector search + lexical SQL + BM25 + RRF | ✅ |
 | Agent Router | Tự phân loại câu hỏi → RAG / AI / AI+RAG | ✅ |
+| Query rewriter | Chuẩn hóa query không dấu/viết tắt/sai chính tả | ✅ |
 | Web search (Tavily) | Tìm kiếm song song nhiều query variants | ✅ |
 | RAG fallback web | Tự động chuyển web khi tài liệu không đủ căn cứ | ✅ |
-| Parallel fetch | Web search + page fetch chạy đồng thời, không tuần tự | ✅ |
 | Session memory cache | Lưu chunks, rolling summary, entities trong phiên | ✅ |
-| Gemini Embedding | Fallback tự động sang gemini-embedding-001 | ✅ |
-| Trích dẫn số trang | Inline `(trang X)` click được khi có document_id | ✅ |
-| Đánh số nguồn đúng | Tài liệu nội bộ [1], web [2]+ theo đúng thứ tự | ✅ |
-| Chuẩn hoá post-process | Dọn link thừa, fix blockquote, loại bỏ lặp lại | ✅ |
+| Gemini Embedding | Model gemini-embedding-001, fallback tự động | ✅ |
+| Xoay vòng API Key | Pool nhiều Gemini key, cooldown 65s khi hết quota | ✅ |
 
-### 2.3 Quản trị (Admin Dashboard)
+### 2.3 Quản trị Admin
 
 | Chức năng | Mô tả | Trạng thái |
 |-----------|-------|------------|
 | Đăng nhập admin | Xác thực bằng mật khẩu cấu hình | ✅ |
 | Quản lý dataset | Tạo, xem, xoá dataset | ✅ |
-| Upload tài liệu | Upload PDF/DOCX, tự động index bằng Celery | ✅ |
+| Upload tài liệu | Upload PDF/DOCX/TXT/MD/CSV/HTML, tự động index | ✅ |
+| Lưu file Azure Blob | File upload lưu Azure khi deploy Render | ✅ |
 | Re-index tài liệu | Chạy lại pipeline chunking + embedding | ✅ |
-| Xem hội thoại | Duyệt lịch sử chat của người dùng | ✅ |
-| Dashboard thống kê | Biểu đồ lượt chat, phân bổ mode RAG/AI, token | ✅ |
-| Xem log hệ thống | Theo dõi usage logs, latency, số chunks | ✅ |
-| Feedback logs | Xem đánh giá like/dislike kèm lý do | ✅ |
+| Versioning tài liệu | Upload mới tự động deprecated phiên bản cũ | ✅ |
+| Xem hội thoại | Duyệt lịch sử chat | ✅ |
+| Dashboard thống kê | Biểu đồ lượt chat, mode RAG/AI, token | ✅ |
+| Feedback logs | Xem đánh giá like/chưa đúng kèm lý do | ✅ |
 
-### 2.4 Bảo mật & An ninh mạng
+### 2.4 Bảo mật
 
 | Chức năng | Mô tả | Trạng thái |
 |-----------|-------|------------|
-| Pseudonymisation session | session_key được HMAC-SHA256 trước khi lưu DB | ✅ |
-| Mask PII trong log | CCCD, SĐT, email tự động được ẩn khi ghi UsageLog | ✅ |
-| Không lưu IP/user-agent | IP và user-agent không được thu thập vào DB | ✅ |
-| SESSION_HMAC_KEY | Khoá HMAC cấu hình riêng, tách khỏi SECRET_KEY | ✅ |
+| Pseudonymisation session | session_key HMAC-SHA256 trước khi lưu DB | ✅ |
+| Mask PII trong log | CCCD, SĐT, email tự động ẩn khi ghi UsageLog | ✅ |
+| Không lưu IP | IP và user-agent không thu thập vào DB | ✅ |
 | CORS strict | Chỉ cho phép origin được cấu hình | ✅ |
-
-### 2.5 Hạ tầng & Vận hành
-
-| Chức năng | Mô tả | Trạng thái |
-|-----------|-------|------------|
-| Docker Compose | Toàn bộ stack chạy 1 lệnh | ✅ |
-| Nginx reverse proxy | Frontend + backend qua cùng port | ✅ |
-| PostgreSQL + pgvector | Lưu trữ chunks + vector embedding | ✅ |
-| Celery worker | Index tài liệu bất đồng bộ | ✅ |
-| Redis | Broker cho Celery | ✅ |
-| Alembic migration | Quản lý schema DB | ✅ |
-| Health check | `/api/health` cho load balancer | ✅ |
-| GC session cache | Dọn session hết TTL tự động | ✅ |
 
 ---
 
@@ -97,142 +80,98 @@ Chatbot AI hỗ trợ công dân tra cứu thủ tục hành chính, quy định
 Người dùng
    |
    v
-Frontend Nginx
-   |-- Trang chủ public: /index.html
-   |-- Launcher chatbot: /static/chatbot-inline.js
-   |-- React app: /assistant, /admin, /app
+Frontend Nginx (React + static)
+   |-- /                    Trang chủ DVC
+   |-- /assistant           React Chat App (iframe embed)
+   |-- /admin               Admin Dashboard
    |
    v
-FastAPI Backend
+FastAPI Backend (:8000)
    |-- /api/chat/stream          SSE streaming chat
-   |-- /api/chat/stream-image    chat kèm ảnh
-   |-- /api/documents/*          quản lý tài liệu/dataset
-   |-- /api/admin/*              dashboard/admin
+   |-- /api/chat/stream-image    Chat kèm ảnh
+   |-- /api/documents/*          Quản lý dataset & tài liệu
+   |-- /api/admin/*              Dashboard & thống kê
+   |-- /health                   Health check
    |
-   +--> PostgreSQL + pgvector    lưu tài liệu, segment, embedding, hội thoại
-   +--> Redis                    broker/cache
-   +--> Celery Worker            index tài liệu bất đồng bộ
-   +--> Gemini API               sinh câu trả lời + embedding
-   +--> Tavily/Web Search        bổ sung nguồn web khi cần
+   +---> PostgreSQL 16 + pgvector   Segments, embedding, hội thoại
+   +---> Redis                      Broker Celery
+   +---> Celery Worker              Index tài liệu bất đồng bộ
+   +---> Azure Blob Storage         Lưu file upload khi deploy Render
+   +---> Gemini API                 Sinh câu trả lời + embedding
+   +---> Tavily API                 Web search bổ sung
 ```
 
 ---
 
 ## 4. Luồng hoạt động
 
-### 4.1. Luồng chat
+### 4.1 Luồng chat
+
 1. Người dùng mở launcher trên trang chủ.
 2. `chatbot-inline.js` mở iframe `/assistant?embed=1`.
 3. React `ChatWindow` gửi request đến `/api/chat/stream` hoặc `/api/chat/stream-image`.
 4. Backend tạo/lấy conversation, lưu user message, tải lịch sử hội thoại.
-5. Agent router quyết định dùng RAG, AI trực tiếp hoặc web search bổ sung.
-6. Chat engine gọi retriever, lọc nguồn, gọi Gemini và stream từng token qua SSE.
+5. `rag/query_rewriter.py` chuẩn hóa query → `agent/router.py` phân loại RAG/AI/AI+RAG.
+6. `chat/engine.py` gọi retriever, lọc nguồn, gọi Gemini và stream từng token qua SSE.
 7. Frontend tiêu thụ SSE, render markdown/citation, cho phép dừng hoặc phản hồi chất lượng.
-8. Khi hoàn tất, backend lưu assistant message và frontend reload messages/conversation.
+8. Khi hoàn tất, backend lưu assistant message và UsageLog.
 
-### 4.2. Luồng ingest tài liệu
-1. Admin upload tài liệu vào dataset.
-2. Backend lưu file, tạo bản ghi Document.
-3. Celery worker chạy `ingest_document_task`.
-4. Ingestor trích xuất nội dung, chunk tài liệu, tạo metadata.
-5. Embedder sinh vector embedding.
-6. Segment + vector được lưu vào PostgreSQL/pgvector.
-7. Tài liệu chuyển sang trạng thái `ready` để retriever sử dụng.
+### 4.2 Luồng ingest tài liệu
+
+1. Admin upload tài liệu vào dataset qua `DocumentsPanel`.
+2. `api/documents.py` lưu file qua `utils/storage.py`:
+   - **Khi có Azure**: lưu lên Azure Blob Storage.
+   - **Local/Docker**: lưu vào `UPLOAD_DIR` trên disk.
+3. Tạo bản ghi Document trong DB, đẩy task ingest chạy background.
+4. `rag/ingestor.py`: extract → chunk → embed.
+5. Segments + vectors lưu vào PostgreSQL/pgvector.
+6. Document chuyển sang trạng thái `ready`.
 
 ---
 
 ## 5. Công nghệ sử dụng
 
 | Lớp | Công nghệ |
-|---|---|
-| Frontend app | React 18, TypeScript, Vite, Tailwind CSS |
+|-----|-----------|
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
 | Trang chủ/launcher | HTML/CSS/Vanilla JS, iframe bridge, postMessage |
 | Backend | FastAPI, Uvicorn, Pydantic Settings |
 | Streaming | Server-Sent Events qua `StreamingResponse` |
-| RAG | Chunking, embedding, pgvector, BM25, Reciprocal Rank Fusion |
+| RAG | Chunking, pgvector cosine, BM25, Reciprocal Rank Fusion |
 | Database | PostgreSQL 16 + pgvector, SQLAlchemy async |
+| File storage | Azure Blob Storage (deploy) / local disk (dev) |
 | Worker | Celery + Redis |
-| LLM | Google Gemini API |
-| Deploy | Docker Compose, Nginx reverse proxy/static serving |
+| LLM | Google Gemini (gemini-2.5-flash) |
+| Embedding | gemini-embedding-001 |
+| Web search | Tavily API |
+| Deploy | Docker Compose, Nginx, Render.com |
 
 ---
 
-## 6. Các lỗi đã sửa trong bản này
+## 6. Cài đặt local
 
-### 6.1. Lỗi `ReferenceError: Cannot access 'Gt' before initialization`
-- Nguyên nhân: `handleReload` dùng `submitMessage` trong dependency array trước khi `submitMessage` được khởi tạo. Khi Vite/Rollup build/minify, `submitMessage` bị đổi tên thành một biến ngắn như `Gt`, dẫn đến lỗi TDZ.
-- Cách sửa:
-  - Di chuyển `handleReload` xuống sau khi `submitMessage` đã được khai báo.
-  - Di chuyển state `streamPhase` lên đầu component trước các callback dùng `setStreamPhase`.
-  - Thêm comment kỹ thuật để tránh tái phạm khi refactor.
+### 6.1 Chuẩn bị
 
-### 6.2. Responsive khung chat
-- Chuyển chiều cao app từ `100vh` sang `100dvh` để phù hợp trình duyệt mobile có thanh địa chỉ động.
-- Thêm `min-h-0`, `overflow: hidden` cho app iframe để tránh tràn/lấp màn hình.
-- Cập nhật JS launcher để tính kích thước panel theo viewport hiện tại.
-- Đặt ngưỡng header clearance riêng cho desktop/mobile, giúp khung chat thu nhỏ không bị khuất header.
+- Docker + Docker Compose
+- Gemini API key tại [Google AI Studio](https://aistudio.google.com/app/apikey)
+- Tavily API key (nếu bật web search)
 
-### 6.3. Launcher icon và hướng hover
-- Icon chat khi chưa hover được căn giữa trong button tròn nền trắng.
-- Khi hover/focus, button giữ mép phải và mở rộng sang trái.
-- Text `Trợ lý hỗ trợ` nằm trong popup, bỏ border/nền riêng để hòa vào nền button.
-- Giữ behavior kéo thả và tự căn panel theo mép phải FAB.
-
----
-
-## 7. Cấu trúc thư mục
-
-```text
-chatbot_dvc/
-├── backend/
-│   ├── app/
-│   │   ├── api/          # Chat, documents, admin APIs
-│   │   ├── agent/        # Router quyết định mode trả lời
-│   │   ├── chat/         # Chat engine, evaluator, session cache
-│   │   ├── models/       # SQLAlchemy models
-│   │   ├── rag/          # Chunker, embedder, retriever, ingestor
-│   │   ├── tasks/        # Celery tasks
-│   │   └── web/          # Live web search
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── index.html        # Trang chủ public
-│   ├── chatbot-inline.js # Launcher/iframe bridge
-│   ├── src/              # React app
-│   ├── assets/           # Icon, ảnh
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── Dockerfile
-├── docker-compose.yml
-├── .env.example
-└── README.md
-```
-
----
-
-## 8. Cài đặt và chạy local
-
-### 8.1. Chuẩn bị
-- Docker + Docker Compose.
-- API key Gemini tại Google AI Studio.
-- Tavily API key nếu bật web search.
-
-### 8.2. Cấu hình môi trường
+### 6.2 Cấu hình
 
 ```bash
 cp .env.example .env
+# Chỉnh sửa .env với các giá trị thực
 ```
 
-Cập nhật tối thiểu:
+Các biến bắt buộc:
 
 ```env
 GEMINI_API_KEY=...
-SECRET_KEY=...
-ADMIN_USERNAME=admin
+SECRET_KEY=...        # openssl rand -base64 42
 ADMIN_PASSWORD=...
 ```
 
-### 8.3. Chạy bằng Docker Compose
+### 6.3 Chạy
 
 ```bash
 docker compose up --build
@@ -240,11 +179,11 @@ docker compose up --build
 
 Sau khi chạy:
 - Trang chủ: `http://localhost`
-- Chat iframe/app: `http://localhost/assistant`
+- Chat: `http://localhost/assistant`
 - Admin: `http://localhost/admin`
 - API docs: `http://localhost:8000/api/docs`
 
-### 8.4. Chạy frontend riêng khi phát triển
+### 6.4 Dev frontend riêng
 
 ```bash
 cd frontend
@@ -252,67 +191,107 @@ npm ci --legacy-peer-deps
 npm run dev
 ```
 
-### 8.5. Chạy backend riêng khi phát triển
+### 6.5 Dev backend riêng
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
 ---
 
-## 9. Biến môi trường quan trọng
+## 7. Deploy lên Render
 
-| Biến | Ý nghĩa |
-|---|---|
-| `GEMINI_API_KEY` | Key chính gọi Gemini |
-| `GEMINI_API_KEYS` | Danh sách key phụ để xoay vòng quota |
-| `TAVILY_API_KEY` | Key web search |
-| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | Kết nối PostgreSQL |
-| `DATABASE_URL_RAW` | URL database managed/deploy |
-| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | Kết nối Redis |
-| `CHUNK_SIZE`, `CHUNK_OVERLAP` | Cấu hình chunk tài liệu |
-| `RETRIEVAL_TOP_K`, `RETRIEVAL_SCORE_THRESHOLD` | Cấu hình retrieval |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Tài khoản admin |
-| `ENABLE_WEB_SEARCH` | Bật/tắt web search bổ sung |
+### 7.1 Các service
+
+| Service | Loại | Ghi chú |
+|---------|------|---------|
+| `chatbot-db` | PostgreSQL | Free tier |
+| `chatbot-redis` | Key Value (Redis) | Free tier |
+| `chatbot-backend` | Web Service (Docker) | rootDir: `backend/` |
+| `chatbot-frontend` | Web Service (Docker) | rootDir: `frontend/` |
+
+Dùng `render.yaml` để tạo tự động qua Render Blueprint.
+
+### 7.2 Biến môi trường cần điền trên Render
+
+| Biến | Nơi lấy |
+|------|---------|
+| `GEMINI_API_KEY` | Google AI Studio |
+| `TAVILY_API_KEY` | Tavily dashboard |
+| `ADMIN_PASSWORD` | Tự đặt |
+| `AZURE_STORAGE_CONNECTION_STRING` | Azure Portal → Storage Account → Access keys |
+| `AZURE_STORAGE_ACCOUNT_NAME` | Tên Storage Account (vd: `chatbotstorage123`) |
+
+> `DATABASE_URL_RAW`, `REDIS_URL_RAW`, `SECRET_KEY`, `SESSION_HMAC_KEY` được Render tự inject.
+
+### 7.3 Tạo Azure Storage Account
+
+1. Vào [Azure Portal](https://portal.azure.com) → **Storage accounts** → **Create**.
+2. Chọn Subscription, Resource group, đặt tên (vd: `chatbotuploads`).
+3. Redundancy: LRS (rẻ nhất, đủ dùng).
+4. Sau khi tạo → **Access keys** → Copy **Connection string**.
+5. Điền vào `AZURE_STORAGE_CONNECTION_STRING` trên Render Dashboard.
+6. Container `chatbot-uploads` sẽ tự tạo lần đầu upload.
 
 ---
 
-## 10. Ghi chú vận hành
+## 8. Biến môi trường đầy đủ
+
+| Biến | Ý nghĩa | Bắt buộc |
+|------|---------|----------|
+| `GEMINI_API_KEY` | Key chính gọi Gemini | ✅ |
+| `GEMINI_API_KEYS` | Danh sách key phụ xoay vòng quota | |
+| `TAVILY_API_KEY` | Key web search Tavily | |
+| `DATABASE_URL_RAW` | URL database managed (Render/cloud) | ✅ deploy |
+| `REDIS_URL_RAW` | URL Redis managed (Render/cloud) | ✅ deploy |
+| `AZURE_STORAGE_CONNECTION_STRING` | Kết nối Azure Blob Storage | ✅ deploy |
+| `AZURE_STORAGE_ACCOUNT_NAME` | Tên Storage Account | ✅ deploy |
+| `AZURE_STORAGE_CONTAINER_NAME` | Tên container (mặc định: `chatbot-uploads`) | |
+| `SECRET_KEY` | Khoá bảo mật app | ✅ |
+| `SESSION_HMAC_KEY` | Khoá HMAC pseudonymise session | ✅ |
+| `ADMIN_USERNAME` | Tài khoản admin | ✅ |
+| `ADMIN_PASSWORD` | Mật khẩu admin | ✅ |
+| `GEMINI_MODEL` | Model Gemini (mặc định: `gemini-2.5-flash`) | |
+| `GEMINI_MAX_OUTPUT_TOKENS` | Giới hạn output token (mặc định: 4096) | |
+| `EMBEDDING_MODEL` | Model embedding (mặc định: `gemini-embedding-001`) | |
+| `CHUNK_SIZE` | Kích thước chunk (mặc định: 800) | |
+| `CHUNK_OVERLAP` | Overlap chunk (mặc định: 120) | |
+| `RETRIEVAL_TOP_K` | Số chunk retrieve (mặc định: 5) | |
+| `RETRIEVAL_SCORE_THRESHOLD` | Ngưỡng score (mặc định: 0.30) | |
+| `ENABLE_WEB_SEARCH` | Bật/tắt web search | |
+| `CORS_ORIGINS` | Danh sách origin cho phép | ✅ |
+
+---
+
+## 9. Ghi chú vận hành
 
 - Không commit `.env`, file upload thật hoặc dữ liệu nhạy cảm.
-- Với production, thay `SECRET_KEY`, `ADMIN_PASSWORD`, cấu hình HTTPS và domain CORS cụ thể.
-- Nên cấu hình volume backup cho PostgreSQL và thư mục upload.
-- Khi thay đổi frontend static/launcher, tăng query version của `/static/chatbot-inline.js` để tránh cache trình duyệt.
-- Khi thay đổi schema database, dùng Alembic migration thay vì sửa bảng thủ công.
+- Azure Blob Storage là storage persistent duy nhất khi deploy Render (file system Render là ephemeral).
+- Khi thay đổi schema database, dùng Alembic migration.
+- Khi thay đổi frontend static/launcher, tăng query version của `chatbot-inline.js` để tránh cache.
 
 ---
 
-## 11. Kiểm tra nhanh sau khi deploy
+## 10. Kiểm tra nhanh sau deploy
 
-- `GET /api/health` trả `status: ok`.
+- `GET /api/health` → `{"status": "ok"}`.
 - Trang chủ load icon launcher ở góc dưới phải.
-- Hover launcher mở sang trái, icon vẫn căn giữa khi chưa hover.
-- Mở khung chat trên desktop không che header.
-- Resize/mobile: panel nằm trong viewport, không bị lấp nửa màn hình.
 - Gửi câu hỏi text và ảnh đều stream được.
-- Admin upload tài liệu, worker chuyển trạng thái tài liệu sang `ready`.
+- Admin upload tài liệu → trạng thái chuyển sang `ready` (file lưu Azure Blob).
 - Citation trong câu trả lời mở đúng tài liệu/trang.
+- Feedback "Chưa đúng" hiển thị đúng trong Admin → Feedback logs.
 
 ---
 
-## 12. Tài liệu tham khảo
+## 11. Tài liệu tham khảo
 
 - FastAPI: https://fastapi.tiangolo.com/
-- React Hooks: https://react.dev/reference/react
-- Vite production build: https://vite.dev/guide/build
-- MDN Server-Sent Events: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
-- MDN CSS viewport units: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/length
 - pgvector: https://github.com/pgvector/pgvector
-- SQLAlchemy async: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
+- Gemini API: https://ai.google.dev/gemini-api/docs
+- Azure Blob Storage Python SDK: https://learn.microsoft.com/en-us/azure/storage/blobs/storage-quickstart-blobs-python
 - Celery: https://docs.celeryq.dev/en/stable/
 - Docker Compose: https://docs.docker.com/compose/
-- Gemini API: https://ai.google.dev/gemini-api/docs
+- Render Blueprint: https://render.com/docs/blueprint-spec

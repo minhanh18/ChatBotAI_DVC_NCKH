@@ -4,10 +4,10 @@
 chatbot_dvc/
 ├── .env                          # Biến môi trường local (KHÔNG commit)
 ├── .env.example                  # Mẫu biến môi trường (commit được)
-├── .gitignore                    # Danh sách file/thư mục không commit
+├── .gitignore                    # File/thư mục không commit
 ├── docker-compose.yml            # Khởi động toàn bộ stack local
-├── render.yaml                   # Cấu hình deploy lên Render.com
-├── README.md                     # Mô tả dự án, hướng dẫn cài đặt
+├── render.yaml                   # Cấu hình deploy lên Render.com (Blueprint)
+├── README.md                     # Mô tả dự án, hướng dẫn cài đặt & deploy
 ├── ARCHITECTURE.md               # Kiến trúc hệ thống & luồng hoạt động
 ├── STRUCTURE.md                  # File này — cấu trúc thư mục
 │
@@ -42,32 +42,34 @@ chatbot_dvc/
 │           │                     # streaming state, upload ảnh, voice input
 │           ├── MessageBubble.tsx # Render từng message: markdown, citations,
 │           │                     # linkifyInlinePageRefs, CitationsPanel,
-│           │                     # ServiceLinksPanel, feedback buttons
+│           │                     # ServiceLinksPanel, feedback buttons (Like/Chưa đúng)
 │           ├── AdminDashboard.tsx# Màn hình giám sát: stats, logs, hội thoại,
-│           │                     # feedback, reset monitoring
+│           │                     # feedback (hiển thị "Hữu ích"/"Chưa đúng"), reset
 │           ├── DocumentsPanel.tsx# Quản lý dataset & tài liệu: upload, delete,
-│           │                     # trạng thái index, re-index
+│           │                     # trạng thái index, re-index, versioning
 │           └── PdfViewerModal.tsx# Modal xem PDF với iframe + page navigation
 │
 └── backend/                      # FastAPI Python backend
     ├── Dockerfile                # Build image backend Python
-    ├── requirements.txt          # Python dependencies
+    ├── requirements.txt          # Python dependencies (bao gồm azure-storage-blob)
     ├── alembic.ini               # Cấu hình Alembic migrations
     ├── script.py.mako            # Template migration script
     │
     ├── versions/                 # Alembic migration files
-    │   └── *.py                  # Từng migration DB
+    │   └── *.py                  # Từng migration DB schema
     │
     └── app/                      # Application code
         ├── main.py               # FastAPI app init, lifespan, CORS,
         │                         # router registration, DB startup check
         ├── config.py             # Pydantic Settings: đọc env vars,
         │                         # GEMINI_API_KEY, TAVILY_API_KEY,
-        │                         # GEMINI_MAX_OUTPUT_TOKENS, etc.
+        │                         # AZURE_STORAGE_* settings,
+        │                         # USE_AZURE_STORAGE property
         │
         ├── models/
         │   └── db.py             # SQLAlchemy models: Conversation, Message,
-        │                         # Document, DocumentChunk, UsageLog,
+        │                         # Document (file_content backup column),
+        │                         # DocumentSegment, UsageLog,
         │                         # MessageFeedback, Dataset
         │
         ├── api/
@@ -76,7 +78,9 @@ chatbot_dvc/
         │   │                     # Orchestrate: routing → engine → SSE response.
         │   │                     # out-of-domain check, clarification check.
         │   ├── documents.py      # Document endpoints: upload, list, delete,
-        │   │                     # dataset CRUD, serve file, re-index trigger
+        │   │                     # dataset CRUD, serve file, re-index trigger,
+        │   │                     # backfill-file-content admin endpoint.
+        │   │                     # Dùng utils/storage.py cho save/delete/exists file.
         │   └── admin.py          # Admin endpoints: dashboard stats, usage logs,
         │                         # conversation list, feedback logs, reset
         │
@@ -86,54 +90,53 @@ chatbot_dvc/
         │
         ├── chat/
         │   ├── engine.py         # Core sinh câu trả lời (file lớn nhất):
-        │   │                     # - _GeminiKeyPool: xoay vòng key, cooldown
+        │   │                     # - _GeminiKeyPool: xoay vòng key, cooldown 65s
         │   │                     # - ChatEngine.stream_response(): luồng chính
         │   │                     # - _generate_rag_answer(): RAG path
-        │   │                     # - _stream_ai(): AI+Web path; LLM sinh ([N]) internally, stripped trước UI
-        │   │                     # - _gemini_stream_in_thread(): Gemini stream
+        │   │                     # - _stream_ai(): AI+Web path
         │   │                     # - _build_rag_context/prompt(): xây prompt
         │   │                     # - _clean_response_text(): pipeline dọn output
-        │   │                     # - _strip_inline_source_links(): strip ([N]) web khỏi UI output; giữ ([N], trang X) RAG
         │   │                     # - _normalize_legal_answer_structure()
-        │   │                     # - _should_fallback_to_web_after_rag()
         │   ├── evaluator.py      # Đánh giá chất lượng RAG:
         │   │                     # - assess_retrieval(): scoring chunks
         │   │                     # - is_legal_query/is_procedure_query()
         │   │                     # - is_out_of_domain(): từ chối ngoài lĩnh vực
         │   │                     # - needs_freshness_check()
-        │   │                     # - build_safe_fallback_answer()
         │   ├── legal_enricher.py # Post-processing pháp lý:
         │   │                     # - extract_service_links(): trích link DVC
         │   │                     # - enrich(): căn cứ pháp lý, source refs
-        │   │                     # - kiểm tra hiệu lực văn bản qua Gemini
-        │   └── session_cache.py  # In-memory session cache:
+        │   └── session_cache.py  # In-memory session cache (TTL 2h):
         │                         # - get_cached_chunks(): overlap lookup
         │                         # - cache_chunks(): lưu chunks mới
         │                         # - maybe_update_summary(): rolling summary
-        │                         # - TTL 2h, GC tự động
+        │                         # - GC tự động khi expired
         │
         ├── rag/
         │   ├── query_rewriter.py # Chuẩn hóa query trước RAG (LLM-based):
-        │   │                     # - rewrite_query(): không dấu/viết tắt/sai chính tả → chuẩn
-        │   │                     # - _needs_rewrite(): bỏ qua nếu query đã đủ dấu (tiết kiệm API)
-        │   │                     # - in-process cache 512 entries, timeout 3s, fail-safe
-        │   ├── retriever.py      # HybridRetriever v3:
+        │   │                     # - rewrite_query(): không dấu/viết tắt → chuẩn
+        │   │                     # - _needs_rewrite(): bỏ qua nếu đã đủ dấu
+        │   │                     # - in-process cache 512 entries, timeout 3s
+        │   ├── retriever.py      # HybridRetriever:
         │   │                     # - vector search (pgvector cosine)
         │   │                     # - lexical search (PostgreSQL tsvector)
         │   │                     # - BM25 reranking + RRF merge
         │   ├── embedder.py       # Gemini embedding:
-        │   │                     # - embed_query/embed_chunks()
-        │   │                     # - model: gemini-embedding-001 (default)
-        │   ├── chunker.py        # Chia tài liệu thành chunks:
+        │   │                     # - embed_query/embed_texts()
+        │   │                     # - model: gemini-embedding-001 (dim 768)
+        │   │                     # - fallback tự động nếu model không khả dụng
+        │   ├── chunker.py        # LegalAwareChunker:
         │   │                     # - kích thước ~800 chars, overlap 120
-        │   │                     # - smart split tại ranh giới câu/đoạn
-        │   ├── extractor.py      # Trích text từ PDF/DOCX:
-        │   │                     # - metadata extraction (số trang, tiêu đề)
+        │   │                     # - smart split tại ranh giới câu/đoạn/điều khoản
+        │   ├── extractor.py      # Trích text từ PDF/DOCX/TXT/MD/CSV/HTML:
+        │   │                     # - tự nhận dạng định dạng qua extension
+        │   │                     # - metadata: số trang với [[PAGE:N]] markers
         │   ├── ingestor.py       # Orchestrate toàn bộ pipeline index:
-        │   │                     # extract → chunk → embed → store
-        │   │                     # chạy trong thread riêng, không block event loop
+        │   │                     # - extract → chunk → embed → store
+        │   │                     # - Khôi phục file từ Azure Blob hoặc DB bytes
+        │   │                     # - timeout cứng 600s, không block event loop
         │   ├── lifecycle.py      # Quản lý vòng đời tài liệu:
-        │   │                     # - delete chunks, update status
+        │   │                     # - versioning, lifecycle_status, merge_meta
+        │   │                     # - compute_file_hash(), normalize_document_name()
         │   ├── legal_metadata.py # Trích metadata pháp lý từ text:
         │   │                     # - số hiệu, ngày ban hành, loại văn bản
         │   └── source_hints.py   # Map tên tài liệu → URL nguồn chính thức
@@ -143,11 +146,8 @@ chatbot_dvc/
         │                         # - build_search_queries(): tạo query variants
         │                         # - tavily_search(): gọi Tavily API
         │                         # - fetch_page_context(): scrape nội dung trang
-        │                         # - score_web_result(): ranking theo độ tươi + relevance
-        │                         # - maybe_fetch_web_context(): entry point chính
-        │                         #   Context format "[N] Title" → LLM sinh ([N]) per câu (stripped trước khi ra UI)
-        │                         # - should_search_web(): quyết định có search không
-        │                         # - extract_focus_content(): trích đoạn liên quan
+        │                         # - score_web_result(): ranking độ tươi + relevance
+        │                         # - maybe_fetch_web_context(): entry point
         │
         ├── tasks/
         │   └── ingest.py         # Celery tasks:
@@ -155,6 +155,13 @@ chatbot_dvc/
         │                         # - celery_app config kết nối Redis
         │
         └── utils/
+            ├── storage.py        # Storage Abstraction Layer:
+            │                     # - save_file(): Azure Blob hoặc local disk
+            │                     # - load_file(): đọc từ Azure hoặc disk
+            │                     # - file_exists(): kiểm tra tồn tại
+            │                     # - delete_file(): xoá file
+            │                     # - restore_to_local(): tải blob về disk tạm
+            │                     # - USE_AZURE_STORAGE từ config.USE_AZURE_STORAGE
             └── data_crypto.py    # Mã hoá dữ liệu người dùng:
                                   # - pseudonymise_session_key(): HMAC-SHA256
                                   # - mask_pii(): ẩn CCCD/SĐT/email trong logs
@@ -167,9 +174,22 @@ chatbot_dvc/
 
 | File | Mục đích |
 |------|---------|
-| `.env` | API keys, DB URL, Redis URL — **KHÔNG commit** |
+| `.env` | API keys, DB URL, Redis URL, Azure keys — **KHÔNG commit** |
 | `.env.example` | Mẫu `.env` để tham khảo |
-| `docker-compose.yml` | Định nghĩa services: backend, frontend, postgres, redis, worker |
-| `render.yaml` | Blueprint deploy Render.com: web + worker + DB + Redis |
-| `backend/requirements.txt` | Python packages |
+| `docker-compose.yml` | Định nghĩa services: backend, frontend, postgres, redis |
+| `render.yaml` | Blueprint deploy Render.com: web + DB + Redis, Azure env vars |
+| `backend/requirements.txt` | Python packages (bao gồm `azure-storage-blob==12.23.1`) |
 | `frontend/package.json` | Node packages |
+
+---
+
+## Các biến môi trường cần bổ sung khi deploy Render
+
+| Biến | Render field | Ghi chú |
+|------|-------------|---------|
+| `AZURE_STORAGE_CONNECTION_STRING` | `sync: false` | Điền thủ công trên Render Dashboard |
+| `AZURE_STORAGE_ACCOUNT_NAME` | `sync: false` | Tên Storage Account (vd: `chatbotuploads`) |
+| `AZURE_STORAGE_ACCOUNT_KEY` | `sync: false` | Access Key (chỉ nếu không dùng connection string) |
+| `AZURE_STORAGE_CONTAINER_NAME` | `value: chatbot-uploads` | Tên container, đã có default trong render.yaml |
+| `GEMINI_API_KEY` | `sync: false` | Bắt buộc |
+| `ADMIN_PASSWORD` | `sync: false` | Bắt buộc |

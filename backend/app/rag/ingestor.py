@@ -62,8 +62,9 @@ async def _ingest_document_inner(document_id: str) -> None:
 
         file_path = doc.file_path
         if not file_path or not _Path(file_path).exists():
-            # Khôi phục file từ DB bytes (ephemeral filesystem đã mất file)
-            if doc.file_content:
+            # Khôi phục file từ Azure Blob hoặc DB bytes (ephemeral filesystem đã mất file)
+            from app.utils.storage import restore_to_local as _restore
+            if doc.file_content and not _Path(file_path or "").exists():
                 ext = doc.file_type or "bin"
                 restored_path = _Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
                 restored_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +72,8 @@ async def _ingest_document_inner(document_id: str) -> None:
                 file_path = str(restored_path)
                 doc.file_path = file_path
                 logger.info("  ↻ Đã khôi phục file từ DB bytes: %s", restored_path)
+            elif file_path and _restore(file_path):
+                logger.info("  ↻ Đã khôi phục file từ Azure Blob: %s", file_path)
             else:
                 await _set_status(db, doc, "error", "File không còn trên server và không có backup trong DB. Vui lòng upload lại.")
                 return

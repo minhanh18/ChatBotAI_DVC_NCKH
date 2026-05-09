@@ -29,6 +29,7 @@ from app.rag.lifecycle import (
 )
 from app.rag.source_hints import resolve_document_source_url
 from app.rag.ingestor import ingest_document
+from app.utils.storage import delete_file, file_exists, load_file, save_file
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
@@ -122,8 +123,8 @@ async def upload_document(
 
     doc_id = str(uuid.uuid4())
     file_path = Path(settings.UPLOAD_DIR) / f"{doc_id}.{ext}"
-    # Offload blocking disk I/O to thread pool to avoid freezing the event loop
-    await asyncio.to_thread(file_path.write_bytes, content)
+    # Lưu file: Azure Blob Storage nếu USE_AZURE_STORAGE=True, ngược lại local disk
+    await asyncio.to_thread(save_file, file_path, content)
 
     doc_meta = build_document_meta(
         file_hash=file_hash,
@@ -295,8 +296,8 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(get_db), 
     normalized_name = (doc.meta or {}).get("normalized_name") or normalize_document_name(doc.name)
     dataset_id = doc.dataset_id
 
-    if doc.file_path and Path(doc.file_path).exists():
-        Path(doc.file_path).unlink()
+    if doc.file_path and file_exists(doc.file_path):
+        await asyncio.to_thread(delete_file, doc.file_path)
 
     await db.delete(doc)
     await db.flush()
@@ -333,24 +334,29 @@ async def serve_document_file(
         raise HTTPException(404, "Tài liệu không tồn tại")
 
     file_path = Path(doc.file_path) if doc.file_path else None
-    if not file_path or not file_path.exists():
+    if not file_path or not file_exists(str(file_path)):
         # Fallback 1: tìm theo UPLOAD_DIR + doc_id + ext
         for ext in settings.ALLOWED_EXTENSIONS:
             candidate = Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
-            if candidate.exists():
+            if file_exists(str(candidate)):
                 file_path = candidate
                 break
 
-    if not file_path or not file_path.exists():
+    if not file_path or not file_exists(str(file_path)):
         # Fallback 2: tìm theo tên gốc trong UPLOAD_DIR
         if doc.name:
             candidate = Path(settings.UPLOAD_DIR) / doc.name
-            if candidate.exists():
+            if file_exists(str(candidate)):
                 file_path = candidate
 
-    if not file_path or not file_path.exists():
-        # Fallback 3: serve trực tiếp từ DB bytes (file bị mất do ephemeral filesystem)
-        if doc.file_content:
+    if not file_path or not file_exists(str(file_path)):
+        # Fallback 3: serve từ Azure Blob hoặc DB bytes
+        from app.utils.storage import load_file as _load_file
+        file_bytes = await asyncio.to_thread(_load_file, str(file_path)) if file_path else None
+        if file_bytes is None and doc.file_content:
+            file_bytes = doc.file_content
+
+        if file_bytes:
             # Xác định media_type từ file_type trong DB (chính xác hơn guess từ tên)
             ft = (doc.file_type or '').lower().lstrip('.')
             media_type = {
@@ -367,14 +373,14 @@ async def serve_document_file(
                     status_code=200,
                     headers={
                         "Content-Type": media_type,
-                        "Content-Length": str(len(doc.file_content)),
+                        "Content-Length": str(len(file_bytes)),
                         "Content-Disposition": "inline",
                         "Cache-Control": "private, max-age=3600",
                     },
                 )
             from starlette.responses import Response as BytesResponse
             return BytesResponse(
-                content=doc.file_content,
+                content=file_bytes,
                 media_type=media_type,
                 headers={
                     "Content-Disposition": f'inline; filename="{doc.name}"',

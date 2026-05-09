@@ -796,7 +796,7 @@ export function MessageBubble({
                         : 'border-[#ead5c9] bg-white text-[#8c533f] hover:border-[#d8b6a6]'
                     }`}
                   >
-                    <ThumbsDown size={compactWarm ? 10 : 11} /> Chưa ổn
+                    <ThumbsDown size={compactWarm ? 10 : 11} /> Chưa đúng
                   </button>
                 </>
               )}

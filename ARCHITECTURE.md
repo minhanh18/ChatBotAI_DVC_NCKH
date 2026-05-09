@@ -12,7 +12,7 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Nginx Reverse Proxy                          │
 │   /          → Frontend static (React build)                    │
-│   /api/*     → Backend FastAPI                                  │
+│   /api/*     → Backend FastAPI (:8000)                          │
 └──────────────────────┬──────────────────────────────────────────┘
                        │
          ┌─────────────▼─────────────┐
@@ -22,12 +22,12 @@
          │  └────┬────┘ └─────────┘  │
          └───────┼────────────────────┘
                  │
-    ┌────────────┼────────────────────────────┐
-    ▼            ▼                            ▼
-┌───────┐  ┌──────────┐              ┌──────────────┐
-│Gemini │  │PostgreSQL│              │  Redis Cache │
-│  API  │  │+pgvector │              │  (Celery)    │
-└───────┘  └──────────┘              └──────────────┘
+    ┌────────────┼────────────────────────────┬──────────────────┐
+    ▼            ▼                            ▼                  ▼
+┌───────┐  ┌──────────┐              ┌──────────────┐  ┌──────────────┐
+│Gemini │  │PostgreSQL│              │  Redis Cache │  │ Azure Blob   │
+│  API  │  │+pgvector │              │  (Celery)    │  │  Storage     │
+└───────┘  └──────────┘              └──────────────┘  └──────────────┘
                                           │
                                      ┌────▼────┐
                                      │ Celery  │
@@ -45,16 +45,16 @@
 User gửi câu hỏi
         │
         ▼
-[1] chat.py: nhận request
+[1] api/chat.py: nhận request
     ├─ Tạo/lấy Conversation
     ├─ Lưu user Message
     ├─ Kiểm tra out-of-domain → từ chối ngay nếu ngoài lĩnh vực
     ├─ Kiểm tra context clarification
-    ├─ rewrite_query() — chuẩn hóa query (LLM, timeout 3s, cached)
+    ├─ rag/query_rewriter.py: rewrite_query()
     │   ├─ _needs_rewrite(): bỏ qua nếu query đã đủ dấu tiếng Việt
     │   ├─ Gemini xử lý: không dấu / viết tắt / sai chính tả / khẩu ngữ
-    │   └─ fail-safe: dùng query gốc nếu lỗi hoặc timeout
-    └─ Gọi agent_router.route()
+    │   └─ fail-safe: dùng query gốc nếu lỗi hoặc timeout (3s)
+    └─ Gọi agent/router.py → route()
         │
         ▼
 [2] agent/router.py: phân loại câu hỏi
@@ -78,16 +78,13 @@ User gửi câu hỏi
     │   │   ├─ asyncio.gather() → Tavily search song song
     │   │   ├─ score_web_result() → ranking + filtering
     │   │   └─ fetch_page_context() → lấy nội dung trang (song song)
-    │   │       └─ Context format "[N] Title" → LLM sinh ([N]) per câu để giữ response súc tích
-    │   ├─ _stream_ai() → Gemini streaming với web context
-    │   │   └─ System prompt hướng dẫn LLM dùng ([N]) internally (bị strip trước khi ra UI)
-    │   └─ Web citations yield qua SSE → hiển thị trong panel Tham khảo thêm
+    │   └─ _stream_ai() → Gemini streaming với web context
     │
     └─── [Post-processing] ─────────────────────────────────────
         ├─ _clean_response_text() → pipeline dọn markdown
-        │   └─ _strip_inline_source_links(): strip ([N]) web khỏi output UI; giữ ([N], trang X) RAG
+        │   └─ _strip_inline_source_links(): strip [N] web khỏi UI; giữ (trang X) RAG
         ├─ _normalize_legal_answer_structure()
-        ├─ Legal enrichment: trích link DVC, căn cứ pháp lý
+        ├─ chat/legal_enricher.py: trích link DVC, căn cứ pháp lý
         ├─ Lưu Message + UsageLog vào DB
         └─ Gửi "done" SSE event
 ```
@@ -98,7 +95,7 @@ User gửi câu hỏi
 Câu hỏi mới
     │
     ▼
-get_cached_chunks(session_key, query)
+chat/session_cache.py: get_cached_chunks(session_key, query)
     ├─ Token overlap ≥ 25% với cached chunks → HIT
     │   └─ Append cached chunks vào fresh chunks
     └─ Cache MISS → dùng fresh chunks từ retriever
@@ -113,30 +110,69 @@ maybe_update_summary() → Gemini nén lịch sử mỗi 3 lượt
 ## 3. Luồng Upload & Index tài liệu
 
 ```
-Admin upload file (PDF/DOCX)
+Admin upload file (PDF/DOCX/TXT/MD/CSV/HTML)
         │
         ▼
-[1] api/documents.py
-    ├─ Lưu file vào disk
-    ├─ Tạo record Document trong DB
-    └─ Đẩy task vào Celery queue
+[1] api/documents.py: upload_document()
+    ├─ Validate extension + file size
+    ├─ compute_file_hash() → kiểm tra duplicate
+    ├─ Versioning: tìm tài liệu cùng tên → deprecated phiên bản cũ
+    ├─ utils/storage.py: save_file()
+    │   ├─ USE_AZURE_STORAGE=True → Azure Blob Storage
+    │   └─ USE_AZURE_STORAGE=False → local disk (UPLOAD_DIR)
+    ├─ Tạo record Document trong DB (status=pending)
+    └─ asyncio.create_task(ingest_document(doc_id))
         │
         ▼
-[2] tasks/ingest.py (Celery Worker)
-    ├─ rag/extractor.py → trích text từ PDF/DOCX
-    ├─ rag/chunker.py → chia thành chunks (~800 chars, overlap 120)
-    ├─ rag/embedder.py → Gemini embedding (gemini-embedding-001)
-    │   └─ fallback tự động nếu model cũ không khả dụng
-    └─ Lưu chunks + vectors vào PostgreSQL + pgvector
+[2] rag/ingestor.py: _ingest_document_inner() [background task]
+    ├─ Đọc doc info, set status=indexing, ĐÓNG connection
+    ├─ Khôi phục file nếu cần:
+    │   ├─ Có Azure Blob → restore_to_local() tải về disk tạm
+    │   └─ Không có → dùng file_content bytes trong DB
+    ├─ rag/extractor.py: extract_text() → văn bản thô
+    ├─ rag/chunker.py: LegalAwareChunker.split() → chunks (~800 chars, overlap 120)
+    ├─ rag/embedder.py: embedding_service.embed_texts() → vectors
+    │   └─ Model: gemini-embedding-001 (fallback tự động)
+    ├─ rag/legal_metadata.py: detect_legal_document_metadata()
+    └─ Lưu DocumentSegment + vectors vào DB (status=ready)
 ```
 
 ---
 
-## 4. Cơ chế bảo mật
+## 4. Cơ chế lưu trữ file (Storage)
+
+```
+utils/storage.py — Storage Abstraction Layer
+    │
+    ├─ USE_AZURE_STORAGE = bool(AZURE_STORAGE_CONNECTION_STRING)
+    │
+    ├─── [Azure mode] ──────────────────────────────────────────
+    │   ├─ save_file()   → BlobClient.upload_blob(overwrite=True)
+    │   ├─ load_file()   → BlobClient.download_blob().readall()
+    │   ├─ file_exists() → BlobClient.get_blob_properties()
+    │   ├─ delete_file() → BlobClient.delete_blob()
+    │   └─ restore_to_local() → tải blob → ghi disk tạm cho ingestor
+    │
+    └─── [Local mode] ──────────────────────────────────────────
+        ├─ save_file()   → Path.write_bytes()
+        ├─ load_file()   → Path.read_bytes() nếu tồn tại
+        ├─ file_exists() → Path.exists()
+        └─ delete_file() → Path.unlink()
+
+Fallback hierarchy khi serve file:
+    1. File trên disk (UPLOAD_DIR)
+    2. Azure Blob (nếu USE_AZURE_STORAGE)
+    3. file_content bytes trong DB (backup column)
+    4. HTTP 404 với metadata để frontend hiển thị
+```
+
+---
+
+## 5. Cơ chế bảo mật
 
 | Thành phần | Cơ chế |
 |-----------|--------|
-| session_key | HMAC-SHA256 một chiều trước khi lưu DB |
+| session_key | HMAC-SHA256 một chiều trước khi lưu DB (utils/data_crypto.py) |
 | PII trong logs | Regex mask CCCD/SĐT/email trước khi ghi UsageLog |
 | IP/user-agent | Không thu thập |
 | Admin API | Basic auth (ADMIN_USERNAME / ADMIN_PASSWORD) |
@@ -144,20 +180,20 @@ Admin upload file (PDF/DOCX)
 
 ---
 
-## 5. Cơ chế xoay vòng Gemini API Key
+## 6. Cơ chế xoay vòng Gemini API Key
 
 ```
-_GeminiKeyPool
-    ├─ Pool = [GEMINI_API_KEY] + GEMINI_API_KEYS.split(',')
+chat/engine.py: _GeminiKeyPool
+    ├─ Pool = [GEMINI_API_KEY] + GEMINI_API_KEYS (comma-separated)
     ├─ get_available_key() → key không trong cooldown
-    ├─ rotate_on_quota(failed_key) → đặt cooldown 65s, chuyển sang key kế
+    ├─ rotate_on_quota(failed_key) → cooldown 65s, chuyển key kế
     ├─ parse_retry_after(exc) → đọc retry-after từ response Gemini
     └─ Nếu tất cả key cooling → await asyncio.sleep() đến key sớm nhất
 ```
 
 ---
 
-## 6. Streaming (SSE Events)
+## 7. Streaming (SSE Events)
 
 | Event type | Dữ liệu | Mô tả |
 |-----------|---------|-------|
@@ -173,16 +209,17 @@ _GeminiKeyPool
 
 ---
 
-## 7. Stack công nghệ
+## 8. Stack công nghệ
 
 | Layer | Công nghệ |
-|-------|-----------|
+|-------|-----------| 
 | Frontend | React 18 + TypeScript + Vite + TailwindCSS |
 | Backend | FastAPI + Python 3.11 + Uvicorn |
-| AI Model | Google Gemini Flash (gemini-2.0-flash / gemini-1.5-flash) |
-| Embedding | gemini-embedding-001 |
+| AI Model | Google Gemini (gemini-2.5-flash) |
+| Embedding | gemini-embedding-001 (dim: 768) |
 | Web Search | Tavily API |
 | Database | PostgreSQL 16 + pgvector |
+| File Storage | Azure Blob Storage (deploy) / local disk (dev) |
 | Cache/Queue | Redis + Celery |
 | Proxy | Nginx |
 | Deployment | Docker Compose / Render.com |

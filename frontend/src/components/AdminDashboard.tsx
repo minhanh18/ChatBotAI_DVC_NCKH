@@ -243,7 +243,7 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
                   <strong className="text-[#734232]">{stats.feedback_7d?.like || 0}</strong>
                 </div>
                 <div className="flex items-center justify-between rounded-xl border border-[#e6d5c7] bg-[#fff7f2] px-3 py-3 text-sm">
-                  <span className="inline-flex items-center gap-2 text-[#8c533f]"><ThumbsDown size={15} /> Chưa ổn</span>
+                  <span className="inline-flex items-center gap-2 text-[#8c533f]"><ThumbsDown size={15} /> Chưa đúng</span>
                   <strong className="text-[#734232]">{stats.feedback_7d?.dislike || 0}</strong>
                 </div>
               </div>
@@ -343,7 +343,7 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
                           <td className="px-4 py-3">
                             <span className="inline-flex items-center gap-1 rounded-full px-2 py-1 border border-[#e6d5c7] bg-[#fff7f2] text-[#8c533f]">
                               {log.rating === 'like' ? <ThumbsUp size={11} /> : <ThumbsDown size={11} />}
-                              {log.rating === 'like' ? 'Hữu ích' : 'Chưa ổn'}
+                              {log.rating === 'like' ? 'Hữu ích' : 'Chưa đúng'}
                             </span>
                           </td>
                           <td className="px-4 py-3 text-[#734232] max-w-[180px]">{log.issue_type || '—'}</td>

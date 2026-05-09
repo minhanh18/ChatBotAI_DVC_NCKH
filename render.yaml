@@ -57,6 +57,16 @@ services:
         value: "0.30"
       - key: CORS_ORIGINS
         value: '["https://chatbot-frontend-oymx.onrender.com","http://localhost","http://localhost:3000"]'
+      # ── Azure Blob Storage — điền sau khi tạo Storage Account ─────────────
+      # Lấy tại: Azure Portal → Storage Account → Access keys → Connection string
+      - key: AZURE_STORAGE_CONNECTION_STRING
+        sync: false   # ← điền thủ công trên Render dashboard
+      - key: AZURE_STORAGE_ACCOUNT_NAME
+        sync: false   # ← tên Storage Account (vd: chatbotstorage123)
+      - key: AZURE_STORAGE_ACCOUNT_KEY
+        sync: false   # ← Access Key (chỉ cần nếu không dùng connection string)
+      - key: AZURE_STORAGE_CONTAINER_NAME
+        value: chatbot-uploads
 
   # ── Frontend ───────────────────────────────────────────────────────────────
   - type: web

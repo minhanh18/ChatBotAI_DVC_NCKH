@@ -129,6 +129,19 @@ class Settings(BaseSettings):
     WEB_SEARCH_TIMEOUT_SEC: float = 8.0
     WEB_SEARCH_MAX_CONTEXT_CHARS: int = 1200
 
+    # ── Azure Blob Storage (file upload khi deploy lên Render) ─────────────
+    # Bật bằng cách set AZURE_STORAGE_CONNECTION_STRING hoặc cả 3 fields bên dưới.
+    # Khi AZURE_STORAGE_CONNECTION_STRING rỗng → dùng local disk (UPLOAD_DIR) như cũ.
+    AZURE_STORAGE_CONNECTION_STRING: str = ""   # ← điền vào Render Environment
+    AZURE_STORAGE_ACCOUNT_NAME: str = ""        # ← tên Storage Account (nếu dùng SAS/key riêng)
+    AZURE_STORAGE_ACCOUNT_KEY: str = ""         # ← Access Key (nếu dùng key riêng thay connection string)
+    AZURE_STORAGE_CONTAINER_NAME: str = "chatbot-uploads"  # tên container trong Azure Blob
+
+    @property
+    def USE_AZURE_STORAGE(self) -> bool:
+        """True khi AZURE_STORAGE_CONNECTION_STRING đã được cấu hình."""
+        return bool(self.AZURE_STORAGE_CONNECTION_STRING.strip())
+
     # ── Admin ──────────────────────────────────────────────
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"

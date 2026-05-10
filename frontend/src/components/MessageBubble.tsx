@@ -539,6 +539,19 @@ export function MessageBubble({
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const progressOffsetRef = useRef(0);
   const speechTextRef = useRef('');
+  // Cache voices — Chrome load bất đồng bộ qua event voiceschanged, Firefox trả ngay
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const loadVoices = () => {
+      const list = window.speechSynthesis.getVoices();
+      if (list.length > 0) voicesRef.current = list;
+    };
+    loadVoices();
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
+  }, []);
 
   useEffect(() => {
     setFeedbackType(message.feedback ?? null);
@@ -605,6 +618,15 @@ export function MessageBubble({
     utterance.lang = 'vi-VN';
     utterance.rate = 1;
     utterance.pitch = 1;
+    // Gán voice Vietnamese rõ ràng — nếu chỉ set lang không set voice,
+    // browser fallback về giọng mặc định (thường là English)
+    // Chrome: getVoices() trả [] lần đầu → dùng voicesRef đã cache qua voiceschanged
+    const cachedVoices = voicesRef.current.length > 0
+      ? voicesRef.current
+      : window.speechSynthesis.getVoices();
+    const viVoice = cachedVoices.find((v) => v.lang === 'vi-VN')
+      ?? cachedVoices.find((v) => v.lang.startsWith('vi'));
+    if (viVoice) utterance.voice = viVoice;
     utterance.onstart = () => setTtsSpeaking(true);
     utterance.onboundary = (event: SpeechSynthesisEvent) => {
       if (event.name && event.name !== 'word' && event.name !== 'sentence') return;

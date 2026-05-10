@@ -225,11 +225,24 @@ async def _call_gemini_rewrite(query: str) -> str:
         else:
             gen_config["temperature"] = 0.0          # deterministic với model thường
 
-        model = genai.GenerativeModel(
-            model_name,
-            generation_config=gen_config,
-        )
-        response = model.generate_content(_REWRITE_PROMPT + query)
+        try:
+            model = genai.GenerativeModel(
+                model_name,
+                generation_config=gen_config,
+            )
+            response = model.generate_content(_REWRITE_PROMPT + query)
+        except (TypeError, ValueError) as sdk_err:
+            # SDK hiện tại chưa hỗ trợ thinking_config trong GenerationConfig
+            # → thử lại không có thinking_config (model vẫn hoạt động bình thường)
+            if "thinking_config" in str(sdk_err):
+                gen_config_fallback = {k: v for k, v in gen_config.items() if k != "thinking_config"}
+                model = genai.GenerativeModel(
+                    model_name,
+                    generation_config=gen_config_fallback,
+                )
+                response = model.generate_content(_REWRITE_PROMPT + query)
+            else:
+                raise
         return response.text or query
 
     return await asyncio.to_thread(_sync_call)

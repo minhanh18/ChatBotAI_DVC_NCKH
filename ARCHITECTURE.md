@@ -98,7 +98,23 @@ User gửi câu hỏi
         └─ Gửi "done" SSE event
 ```
 
-### 2.2 Session Cache
+### 2.2 Context follow-up (câu hỏi tiếp nối)
+
+```
+"lệ phí như nào" (câu ngắn, không có topic riêng)
+    │
+    ▼
+_is_context_light_query() → True
+    │
+    ▼
+_collect_conversation_topics(history) → ["đăng ký tạm trú", ...]
+    │
+    ├─ 1 topic trong history → effective_query = "Chủ đề: đăng ký tạm trú. Câu hỏi: lệ phí như nào"
+    └─ Nhiều topic → lấy topic từ user message GẦN NHẤT → ghép vào query
+       → RAG/search tìm đúng tài liệu tạm trú, không bị kéo sang tài liệu thuế
+```
+
+### 2.3 Session Cache
 
 ```
 Câu hỏi mới

@@ -510,7 +510,20 @@ def _resolve_effective_query(query: str, history: list[Message]) -> str:
     if len(history_topics) == 1:
         return f"Chủ đề hiện tại: {history_topics[0]}. Câu hỏi: {clean_query}"
 
-    # Không rõ chủ đề hoặc nhiều chủ đề: giữ nguyên để hệ thống hỏi làm rõ/không kéo nhiễu.
+    # Nhiều chủ đề: lấy chủ đề GẦN NHẤT (từ tin nhắn user cuối cùng có topic)
+    # để kéo đúng ngữ cảnh cho câu hỏi follow-up ngắn như "lệ phí như nào"
+    if history_topics:
+        # Lấy topic của user message gần nhất
+        for msg in reversed(history):
+            if msg.role != "user":
+                continue
+            recent = _extract_topics(msg.content or "")
+            if recent:
+                return f"Chủ đề hiện tại: {recent[0]}. Câu hỏi: {clean_query}"
+        # fallback: topic cuối cùng trong danh sách
+        return f"Chủ đề hiện tại: {history_topics[-1]}. Câu hỏi: {clean_query}"
+
+    # Không rõ chủ đề: giữ nguyên để hệ thống hỏi làm rõ/không kéo nhiễu.
     return clean_query
 
 

@@ -19,6 +19,11 @@ PROCEDURE_PATTERNS = [
     r"\bthủ tục\b", r"\bhồ sơ\b", r"\bcần chuẩn bị\b", r"\bnộp ở đâu\b",
     r"\bbước\s*1\b", r"\btrình tự\b", r"\bcách làm\b", r"\bdịch vụ công\b",
     r"\bđăng ký\b", r"\bxin\b", r"\bcấp\b", r"\bchuyển\b", r"\bđiều chỉnh\b",
+    # Câu hỏi về lệ phí / thời gian / hồ sơ (kể cả follow-up ngắn)
+    r"\blệ phí\b", r"\bphí\b", r"\bmất bao lâu\b", r"\bthời hạn\b",
+    r"\bgiấy tờ\b", r"\btài liệu cần\b", r"\bđiều kiện\b",
+    # Không dấu phổ biến
+    r"\bho so\b", r"\ble phi\b", r"\bthu tuc\b", r"\bdang ky\b",
 ]
 
 FRESHNESS_PATTERNS = [
@@ -98,17 +103,23 @@ def is_focused_aspect_query(query: str) -> bool:
     """
     q = (query or "").lower()
     _FOCUSED_PATTERNS = [
-        # Hỏi về hồ sơ
+        # Hỏi về hồ sơ (cả có dấu lẫn không dấu)
         r"\b(hồ sơ|giấy tờ|tài liệu|văn bản|cần (chuẩn bị|mang|nộp|có)|cần những gì|gồm (những gì|gì|các gì))\b",
-        # Hỏi về lệ phí / chi phí
-        r"\b(lệ phí|phí|chi phí|mất bao nhiêu tiền|giá|bao nhiêu tiền|miễn phí không|có mất phí không)\b",
+        r"\b(ho so|giay to|can chuan bi|can nhung gi|gom nhung gi)\b",  # không dấu
+        # Hỏi về lệ phí / chi phí (cả có dấu và không dấu, và câu hỏi tiếp theo ngắn)
+        r"\b(lệ phí|phí|chi phí|mất bao nhiêu tiền|bao nhiêu tiền|miễn phí không|có mất phí không)\b",
+        r"\b(le phi|phi|mat bao nhieu|bao nhieu tien|mien phi khong)\b",  # không dấu
+        r"\b(như nào|như thế nào|thế nào|ra sao|bao nhiêu)\b",  # câu hỏi tiếp theo ngắn về số/cách
         # Hỏi về thời gian
         r"\b(mất bao lâu|thời gian|bao nhiêu ngày|bao nhiêu giờ|bao lâu|thời hạn giải quyết|khi nào xong)\b",
+        r"\b(mat bao lau|bao nhieu ngay|bao lau|khi nao xong)\b",  # không dấu
         # Hỏi về điều kiện / đối tượng
-        r"\b(điều kiện|yêu cầu|đối tượng|ai (được|có thể|phải)|tiêu chuẩn|tiêu chí)\b",
+        r"\b(điều kiện|yêu cầu|đối tượng|tiêu chuẩn|tiêu chí)\b",
+        r"\b(dieu kien|yeu cau|doi tuong|tieu chuan)\b",  # không dấu
         # Hỏi về nơi nộp / địa điểm
         r"\b(nộp ở đâu|nơi nộp|địa điểm|trụ sở|phòng ban|cơ quan nào|đến đâu|ở đâu nộp)\b",
-        # Hỏi về kết quả / nhận ở đâu
+        r"\b(nop o dau|noi nop|dia diem|co quan nao|den dau|o dau nop)\b",  # không dấu
+        # Hỏi về kết quả
         r"\b(kết quả|nhận ở đâu|trả kết quả|nhận lại|nhận được gì|nhận như thế nào)\b",
         # Hỏi riêng về căn cứ pháp lý
         r"\b(căn cứ pháp lý|quy định (nào|tại đâu)|luật nào|theo (điều|khoản|nghị định|thông tư) nào)\b",

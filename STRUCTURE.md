@@ -175,7 +175,7 @@ chatbot_dvc/
 | `is_out_of_domain()` | Từ chối câu hỏi ngoài lĩnh vực hành chính/pháp lý |
 | `is_legal_query()` | Phát hiện câu hỏi pháp lý → điều chỉnh prompt |
 | `is_procedure_query()` | Phát hiện câu hỏi thủ tục hành chính |
-| `is_focused_aspect_query()` | **Mới** — Phát hiện user hỏi 1 khía cạnh cụ thể (hồ sơ / lệ phí / thời gian / điều kiện / nơi nộp...). Khi True → `_domain_instructions()` KHÔNG inject 8 mục đầy đủ → Gemini chỉ trả lời đúng phần được hỏi, không liệt kê thêm các bước khác. |
+| `is_focused_aspect_query()` | Phát hiện user hỏi 1 khía cạnh cụ thể (hồ sơ / lệ phí / thời gian / điều kiện / nơi nộp...). Nhận diện cả query không dấu (`ho so`, `le phi`) và câu follow-up ngắn (`như nào`, `thế nào`). Khi True → `_domain_instructions()` KHÔNG inject 8 mục đầy đủ. |
 ```
 
 ---

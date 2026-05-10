@@ -280,33 +280,44 @@ export function ChatWindow({
 
   useEffect(() => {
     if (!pendingAssistantTopRef.current || !lastAssistantMessageId) return;
-    // Double RAF: đảm bảo React đã commit DOM xong trước khi đọc offsetTop
-    // setTimeout 80ms thêm: chờ ảnh/audio/audio waveform render xong layout
+
+    const attemptScroll = (attemptsLeft: number) => {
+      const viewport = scrollViewportRef.current;
+      const assistantEl = latestAssistantRef.current;
+      if (!viewport || !assistantEl) {
+        // Element chưa mount (thường xảy ra ở câu đầu tiên trong chế độ thu nhỏ)
+        // Retry tối đa 8 lần × 80ms = 640ms để chờ layout sẵn sàng
+        if (attemptsLeft > 0) {
+          window.setTimeout(() => attemptScroll(attemptsLeft - 1), 80);
+        } else {
+          pendingAssistantTopRef.current = false;
+        }
+        return;
+      }
+      const headerHeight = headerRef.current?.offsetHeight ?? 0;
+      const gap = embedded ? 10 : 12;
+      const vpRect = viewport.getBoundingClientRect();
+      // Bỏ qua nếu viewport có kích thước 0 (iframe chưa visible — thu nhỏ lần đầu)
+      if (vpRect.width === 0 || vpRect.height === 0) {
+        if (attemptsLeft > 0) {
+          window.setTimeout(() => attemptScroll(attemptsLeft - 1), 80);
+        } else {
+          pendingAssistantTopRef.current = false;
+        }
+        return;
+      }
+      const elRect = assistantEl.getBoundingClientRect();
+      const currentScrollTop = viewport.scrollTop;
+      const elTopRelativeToVp = elRect.top - vpRect.top;
+      const targetTop = Math.max(0, currentScrollTop + elTopRelativeToVp - headerHeight - gap);
+      viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+      pendingAssistantTopRef.current = false;
+    };
+
+    // Double RAF để đảm bảo React commit DOM xong, sau đó bắt đầu vòng retry
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const doScroll = () => {
-          const viewport = scrollViewportRef.current;
-          const assistantEl = latestAssistantRef.current;
-          if (!viewport || !assistantEl) {
-            pendingAssistantTopRef.current = false;
-            return;
-          }
-          const headerHeight = headerRef.current?.offsetHeight ?? 0;
-          const gap = embedded ? 10 : 12;
-          // Dùng getBoundingClientRect để đọc vị trí thực trong viewport hiện tại
-          // (offsetTop không đúng khi fullscreen vì parent scroll container thay đổi)
-          const elRect = assistantEl.getBoundingClientRect();
-          const vpRect = viewport.getBoundingClientRect();
-          const currentScrollTop = viewport.scrollTop;
-          // Vị trí element so với top của viewport scroll container
-          const elTopRelativeToVp = elRect.top - vpRect.top;
-          const targetTop = Math.max(0, currentScrollTop + elTopRelativeToVp - headerHeight - gap);
-          viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
-        };
-        doScroll();
-        // Retry sau 150ms để bắt được layout shift do ảnh/audio load
-        window.setTimeout(doScroll, 150);
-        pendingAssistantTopRef.current = false;
+        attemptScroll(8);
       });
     });
   }, [embedded, lastAssistantMessageId, messages]);

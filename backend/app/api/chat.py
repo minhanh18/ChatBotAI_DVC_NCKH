@@ -171,8 +171,22 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     # Query sạch để dùng cho web search — bỏ prefix "Chủ đề hiện tại: X. Câu hỏi: "
     # để Tavily không bị lệch chủ đề tìm kiếm
-    _topic_prefix_re = re.compile(r'^Chủ đề hiện tại:[^.]+\.\s*Câu hỏi:\s*', re.IGNORECASE)
-    web_search_query = _topic_prefix_re.sub('', effective_query).strip() or effective_query
+    # web_search_query: với câu hỏi follow-up có prefix "Chủ đề hiện tại: X. Câu hỏi: Q"
+    # → KHÔNG strip topic, thay vào đó ghép "Q + X" để Tavily search đúng ngữ cảnh
+    # Ví dụ: "Chủ đề: đăng ký tạm trú. Câu hỏi: lệ phí như nào"
+    #       → web_search_query = "lệ phí đăng ký tạm trú"  (không phải "lệ phí như nào")
+    _topic_prefix_re = re.compile(r'^Chủ đề hiện tại:\s*([^.]+)\.\s*Câu hỏi:\s*(.+)$', re.IGNORECASE | re.DOTALL)
+    _topic_match = _topic_prefix_re.match(effective_query.strip())
+    if _topic_match:
+        _topic_part = _topic_match.group(1).strip()
+        _question_part = _topic_match.group(2).strip()
+        # Ghép "câu hỏi + topic" để tạo query tìm kiếm có ngữ cảnh
+        # Bỏ các từ hỏi mơ hồ ("như nào", "như thế nào", "ra sao") vì chúng không có ích trong search
+        _vague_re = re.compile(r'\b(như nào|như thế nào|thế nào|ra sao|như vậy)\b', re.IGNORECASE)
+        _clean_q = _vague_re.sub('', _question_part).strip().rstrip(',.')
+        web_search_query = f"{_clean_q} {_topic_part}".strip() if _clean_q else _topic_part
+    else:
+        web_search_query = effective_query.strip()
 
     requested_mode = AnswerMode(req.mode) if req.mode in ("rag", "ai") else None
     force_web = await _should_auto_force_web(db, conversation.id, req.query)

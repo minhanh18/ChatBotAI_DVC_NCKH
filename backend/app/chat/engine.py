@@ -1888,6 +1888,24 @@ class ChatEngine:
                                         domain='dichvucong.gov.vn' if 'dichvucong.gov.vn' in _url else None,
                                     )])
                             yield _sse(StreamEvent("service_links", service_links_data))
+
+                        # ── Kiểm tra hiệu lực văn bản cho RAG path ──────────────
+                        # Chỉ chạy khi câu trả lời có tham chiếu pháp lý (tránh tốn quota
+                        # cho câu hỏi thông thường không có văn bản pháp luật nào).
+                        # Dùng cùng cơ chế enrich() như AI path — kết quả hiển thị ở
+                        # panel "Căn cứ pháp lý" + note hiệu lực trong Tham khảo thêm.
+                        _has_legal_refs = bool(_enricher._extract_references(
+                            full_text + "\n\n" + rag_context_text
+                        ))
+                        if _has_legal_refs:
+                            enrich = await _enricher.enrich(
+                                response_text=full_text,
+                                context_chunks_text=rag_context_text,
+                            )
+                            if enrich.legal_refs:
+                                yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
+                            if enrich.source_refs:
+                                yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
                     else:
                         service_links_data = _enricher.extract_service_links_sync(full_text)
                         if service_links_data:

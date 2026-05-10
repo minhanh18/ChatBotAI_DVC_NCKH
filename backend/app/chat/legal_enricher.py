@@ -84,10 +84,26 @@ class EnrichResult:
 
 class LegalEnricher:
     def __init__(self):
-        self._model = genai.GenerativeModel(
-            settings.GEMINI_MODEL,
-            generation_config=genai.GenerationConfig(temperature=0, max_output_tokens=1024),
+        model_name = settings.GEMINI_MODEL
+        # gemini-2.5-flash (thinking model) yêu cầu temperature >= 1.0
+        # Các model thường (gemini-1.5-*) dùng temperature=0 cho output deterministic
+        _is_thinking = "2.5" in model_name or "thinking" in model_name.lower()
+        _gen_config = genai.GenerationConfig(
+            temperature=1.0 if _is_thinking else 0.0,
+            max_output_tokens=1024,
         )
+        if _is_thinking:
+            # Tắt thinking budget cho enricher: không cần reasoning phức tạp,
+            # chỉ cần trả JSON nhanh → tiết kiệm token và quota
+            try:
+                _gen_config = genai.GenerationConfig(
+                    temperature=1.0,
+                    max_output_tokens=1024,
+                    thinking_config={"thinking_budget": 0},
+                )
+            except Exception:
+                _gen_config = genai.GenerationConfig(temperature=1.0, max_output_tokens=1024)
+        self._model = genai.GenerativeModel(model_name, generation_config=_gen_config)
 
     async def enrich(
         self,

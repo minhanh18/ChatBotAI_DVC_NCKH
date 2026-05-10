@@ -605,6 +605,34 @@ export function MessageBubble({
     utterance.lang = 'vi-VN';
     utterance.rate = 1;
     utterance.pitch = 1;
+
+    // Chủ động chọn voice tiếng Việt nếu trình duyệt có — không để browser tự chọn
+    // (nếu không set voice thì browser dùng default = thường là English)
+    const _setViVoice = () => {
+      const voices = window.speechSynthesis.getVoices();
+      // Ưu tiên: vi-VN → vi → bất kỳ voice nào có "viet" trong tên
+      const viVoice =
+        voices.find(v => v.lang === 'vi-VN') ||
+        voices.find(v => v.lang.startsWith('vi')) ||
+        voices.find(v => v.name.toLowerCase().includes('viet'));
+      if (viVoice) {
+        utterance.voice = viVoice;
+      }
+      // Nếu không có voice vi-VN: giữ utterance.lang = 'vi-VN' để browser tự xử lý
+      // (một số browser đọc được dù không có voice riêng)
+    };
+
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      // Voices đã load → set ngay
+      _setViVoice();
+    } else {
+      // Voices chưa load (lần đầu khởi động) → chờ sự kiện voiceschanged
+      window.speechSynthesis.onvoiceschanged = () => {
+        _setViVoice();
+        window.speechSynthesis.onvoiceschanged = null;
+      };
+    }
     utterance.onstart = () => setTtsSpeaking(true);
     utterance.onboundary = (event: SpeechSynthesisEvent) => {
       if (event.name && event.name !== 'word' && event.name !== 'sentence') return;

@@ -732,7 +732,7 @@ export function MessageBubble({
               )}
             </div>
 
-            <div className={`mt-2 flex flex-wrap items-center gap-2 ${compactWarm ? 'text-[10px]' : 'text-[11px]'} ${isWarm ? 'text-[#a08a80]' : 'text-slate-400'} ${isUser ? 'justify-end mr-1' : 'justify-start ml-1'}`}>
+            <div className={`mt-1.5 flex flex-wrap items-center gap-1.5 ${compactWarm ? 'text-[10px]' : 'text-[11px]'} ${isWarm ? 'text-[#a08a80]' : 'text-slate-400'} ${isUser ? 'justify-end mr-1' : 'justify-start ml-1'}`}>
               {deliveryStatus !== 'sent' && isUser && <span>{deliveryText}</span>}
 
               {/* Thời gian chỉ hiển thị sau khi streaming xong */}
@@ -749,7 +749,7 @@ export function MessageBubble({
               {!isStreaming && !isUser && (
                 <button
                   onClick={copyFull}
-                  className={`inline-flex items-center gap-1 rounded-full border transition-colors ${compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'} border-[#ead5c9] bg-white text-[#8c533f] hover:text-[#734232] hover:border-[#d8b6a6]`}
+                  className={`inline-flex items-center gap-1 rounded-full border transition-colors whitespace-nowrap ${compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'} border-[#ead5c9] bg-white text-[#8c533f] hover:text-[#734232] hover:border-[#d8b6a6]`}
                 >
                   {copiedAll ? <Check size={compactWarm ? 10 : 11} className="text-emerald-500" /> : <Copy size={compactWarm ? 10 : 11} />}
                   {copiedAll ? 'Đã chép' : 'Copy'}
@@ -760,7 +760,7 @@ export function MessageBubble({
               {!isStreaming && onReload && (
                 <button
                   onClick={onReload}
-                  className={`inline-flex items-center gap-1 rounded-full border transition-colors ${compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'} border-[#ead5c9] bg-white text-[#8c533f] hover:text-[#734232] hover:border-[#d8b6a6]`}
+                  className={`inline-flex items-center gap-1 rounded-full border transition-colors whitespace-nowrap ${compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'} border-[#ead5c9] bg-white text-[#8c533f] hover:text-[#734232] hover:border-[#d8b6a6]`}
                   title={isUser ? 'Gửi lại câu hỏi này' : 'Tạo lại phản hồi'}
                 >
                   <RotateCcw size={compactWarm ? 10 : 11} />
@@ -777,7 +777,7 @@ export function MessageBubble({
                       feedbackType === 'like'
                         ? 'border-[#d8b49e] bg-[#fbefe8] text-[#8c533f]'
                         : 'border-[#ead5c9] bg-white text-[#8c533f] hover:border-[#d8b6a6]'
-                    }`}
+                    } whitespace-nowrap`}
                   >
                     <ThumbsUp size={compactWarm ? 10 : 11} /> Hữu ích
                   </button>
@@ -794,7 +794,7 @@ export function MessageBubble({
                       feedbackType === 'dislike'
                         ? 'border-[#d8b49e] bg-[#fbefe8] text-[#8c533f]'
                         : 'border-[#ead5c9] bg-white text-[#8c533f] hover:border-[#d8b6a6]'
-                    }`}
+                    } whitespace-nowrap`}
                   >
                     <ThumbsDown size={compactWarm ? 10 : 11} /> Chưa đúng
                   </button>

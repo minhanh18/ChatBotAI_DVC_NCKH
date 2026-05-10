@@ -211,13 +211,9 @@ def _common_format_rules() -> str:
 - Không biến danh sách nhiều cấp thành danh sách phẳng một cấp.
 
 ## Quy tắc trích dẫn điều khoản pháp luật
-- Chỉ dùng blockquote (>) để trích nguyên văn điều khoản pháp luật khi đoạn trích là một câu/đoạn có ý nghĩa đầy đủ, có chủ thể và nghĩa vụ/quyền/hành vi rõ ràng.
-- **Tên điều khoản** (vd: "Điều 27. Điều kiện đăng ký tạm trú") chỉ được viết MỘT LẦN duy nhất — hoặc là tiêu đề phía trên blockquote (không dùng dấu >) HOẶC là dòng đầu tiên trong blockquote (dùng >), KHÔNG viết cả hai. Ưu tiên: viết tên điều khoản phía trên, rồi trích nội dung bên dưới bằng blockquote.
-- **Tất cả các khoản trong cùng một điều** (vd: khoản 1 và khoản 2 của cùng Điều 27) phải nằm CÙNG trong một khối blockquote liên tục, không tách thành khoản ngoài và khoản trong blockquote riêng biệt.
-- Không trích rời rạc các tiêu đề hoặc mảnh danh sách như `1. Trình tự...`, `a) Tiếp nhận...`; các mảnh này phải được diễn giải thành danh sách thường.
-- Trong blockquote điều khoản: không dùng **in đậm**, không bọc lặp ngoặc kép; nếu cần nhấn mạnh thì dùng *in nghiêng* toàn đoạn trích.
-- Không blockquote câu văn thông thường, hướng dẫn thực tế, ví dụ, hoặc câu diễn giải.
-- Sau blockquote phải xuống đoạn riêng để diễn giải dễ hiểu và/hoặc ví dụ bằng text thường. Tuyệt đối không lặp lại y nguyên nội dung vừa trích dẫn.
+- Nếu câu trả lời có căn cứ từ luật/nghị định/thông tư, hãy trích nguyên văn điều/khoản đó bằng blockquote (>).
+- Chỉ trích điều khoản pháp luật thực sự — không blockquote hướng dẫn thực tế, ví dụ, hay câu diễn giải.
+- Sau blockquote: diễn giải ngắn gọn bằng ngôn ngữ dễ hiểu, không lặp lại nội dung vừa trích.
 - Không chèn link/số nguồn tham khảo kiểu [1](url) trong thân câu trả lời; nguồn sẽ hiển thị ở khu vực Tham khảo thêm. Chỉ giữ link thao tác trực tiếp như biểu mẫu hoặc cổng nộp hồ sơ nếu URL xuất hiện rõ trong tài liệu/web context."""
 
 
@@ -1210,6 +1206,34 @@ def _fix_url_as_label_links(text: str) -> str:
     return re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', _replace, text)
 
 
+
+def _remove_broken_link_sentences(text: str) -> str:
+    """
+    Xóa câu/dòng chứa link bị lỗi:
+    - Link text rõ ràng nhưng không có URL thực: [Tên](URL_thủ_tục_cụ_thể) hoặc [text]()
+    - Câu kết thúc bằng link text trần không có ngoặc URL: "...tại đây" không có hyperlink
+    - Câu cấu trúc: "tại đường dẫn ... 👉 [text](broken_url)" — dạng dẫn đến link lỗi
+    - Câu chứa placeholder URL dạng: URL_*, link_*, <url>, [url], ...
+    """
+    if not text:
+        return text
+
+    _BROKEN_LINK_PATTERNS = [
+        # Link markdown với URL placeholder hoặc rỗng
+        re.compile(r"\[([^\]]+)\]\(\s*(URL_[^)]*|<[^>]+>|\[.*?\]|https?://[^)]*placeholder[^)]*|)\s*\)", re.IGNORECASE),
+        # Câu chứa "👉 [text](url)" nhưng url là placeholder
+        re.compile(r"👉\s*\[([^\]]+)\]\(\s*(URL_[^)]*|https?://[^)\s]*\.\.\.)[^)]*\)", re.IGNORECASE),
+    ]
+
+    lines = text.splitlines()
+    result = []
+    for line in lines:
+        has_broken = any(p.search(line) for p in _BROKEN_LINK_PATTERNS)
+        if not has_broken:
+            result.append(line)
+        # else: bỏ qua dòng có link lỗi
+    return "\n".join(result)
+
 def _clean_response_text(text: str, citations: list[Citation] | None = None) -> str:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -1229,6 +1253,7 @@ def _clean_response_text(text: str, citations: list[Citation] | None = None) -> 
     cleaned = _linkify_inline_doc_references(cleaned, citations or [])
     cleaned = _format_inline_references(cleaned, citations or [])
     cleaned = _strip_inline_source_links(cleaned)
+    cleaned = _remove_broken_link_sentences(cleaned)  # xóa câu có link placeholder/lỗi
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned
 

@@ -47,6 +47,24 @@ LEGAL_OBJECT_KEYWORDS = [
     "cư trú", "tạm trú", "thường trú", "cccd", "căn cước", "hộ tịch", "thuế",
     "dịch vụ công", "hộ khẩu", "khai sinh", "kết hôn", "ly hôn",
     "bảo hiểm", "bảo hiểm y tế", "bảo hiểm xã hội", "bhyt", "bhxh",
+    # Từ KHÔNG DẤU phổ biến — cần thiết vì normalize_query_text() strip dấu
+    # trước khi check keyword → "tạm trú" → "tam tru" không match list có dấu
+    "tam tru", "thuong tru", "cu tru", "ho so", "thu tuc", "dang ky",
+    "khai sinh", "ket hon", "ho khau", "can cuoc", "dich vu cong",
+    "bao hiem", "le phi", "hanh chinh",
+]
+
+# Tên miền thương mại/ngân hàng bị chặn hoàn toàn — không liên quan thủ tục hành chính
+_BLOCKED_COMMERCIAL_DOMAINS = [
+    "techcombank.com", "vpbank.com.vn", "mbbank.com.vn", "vietcombank.com.vn",
+    "bidv.com.vn", "agribank.com.vn", "vietinbank.vn", "hdbank.com.vn",
+    "sacombank.com", "acb.com.vn", "tpbank.vn", "ocb.com.vn",
+    "momo.vn", "zalopay.vn", "shopee.vn", "lazada.vn", "tiki.vn",
+    "vietnamworks.com", "topcv.vn", "careerbuilder.vn",
+    "24h.com.vn", "dantri.com.vn", "vnexpress.net", "tuoitre.vn", "thanhnien.vn",
+    "cafef.vn", "cafebiz.vn", "baodautu.vn", "vneconomy.vn",
+    "youtube.com", "facebook.com", "tiktok.com", "zalo.me",
+    "wikipedia.org",
 ]
 
 DISPUTE_RECHECK_KEYWORDS = [
@@ -752,7 +770,15 @@ def is_candidate_url_allowed(url: str, query: str) -> bool:
     domain = get_domain(url_l)
     if not domain:
         return False
-    if _contains_any(normalize_query_text(query).lower(), LEGAL_OBJECT_KEYWORDS + LEGAL_FRESHNESS_KEYWORDS + DISPUTE_RECHECK_KEYWORDS):
+    # Chặn cứng domain thương mại/ngân hàng không liên quan hành chính
+    if any(domain == d or domain.endswith(f".{d}") for d in _BLOCKED_COMMERCIAL_DOMAINS):
+        return False
+    # Kiểm tra keyword pháp lý/hành chính trong query — dùng CẢ query gốc và normalized
+    # vì normalize_query_text() strip dấu → "tạm trú" → "tam tru", check cả 2 để không bỏ sót
+    query_normalized = normalize_query_text(query).lower()
+    query_original = query.lower()
+    all_keywords = LEGAL_OBJECT_KEYWORDS + LEGAL_FRESHNESS_KEYWORDS + DISPUTE_RECHECK_KEYWORDS
+    if _contains_any(query_normalized, all_keywords) or _contains_any(query_original, all_keywords):
         return is_allowed_legal_domain(domain)
     return True
 

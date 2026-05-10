@@ -257,49 +257,50 @@ export function ChatWindow({
     autoScrolledForCurrentReplyRef.current = true;
 
     requestAnimationFrame(() => {
-      const anchor = latestReplyAnchorRef.current;
-      const viewport = scrollViewportRef.current;
-      if (!anchor || !viewport) return;
+      requestAnimationFrame(() => {
+        const anchor = latestReplyAnchorRef.current;
+        const viewport = scrollViewportRef.current;
+        if (!anchor || !viewport) return;
 
-      const anchorRect = anchor.getBoundingClientRect();
-      const viewportRect = viewport.getBoundingClientRect();
-      const headerH = headerRef.current?.offsetHeight ?? 60;
+        const anchorRect = anchor.getBoundingClientRect();
+        const viewportRect = viewport.getBoundingClientRect();
+        const headerH = headerRef.current?.offsetHeight ?? 60;
 
-      // Anchor bị khuất lên trên (trên header) → cuộn lên đặt anchor cách header 12px
-      const isAboveViewport = anchorRect.top < viewportRect.top + headerH + 4;
-      if (isAboveViewport) {
-        const gap = embedded ? 10 : 12;
-        const targetTop = Math.max(0, viewport.scrollTop + anchorRect.top - viewportRect.top - headerH - gap);
-        viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
-      }
-      // Nếu anchor còn hiển thị trong viewport → không làm gì cả
+        // Anchor bị khuất lên trên (trên header) → cuộn lên đặt anchor cách header 12px
+        const isAboveViewport = anchorRect.top < viewportRect.top + headerH + 4;
+        if (isAboveViewport) {
+          const gap = embedded ? 10 : 12;
+          const targetTop = Math.max(0, viewport.scrollTop + anchorRect.top - viewportRect.top - headerH - gap);
+          viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+        }
+        // Nếu anchor còn hiển thị trong viewport → không làm gì cả
+      });
     });
   }, [scrollLatestReplyIntoView, stream.active, embedded]);
 
   useEffect(() => {
     if (!pendingAssistantTopRef.current || !lastAssistantMessageId) return;
+    // Double RAF: đảm bảo React đã commit DOM xong trước khi đọc offsetTop
+    // setTimeout 80ms thêm: chờ ảnh/audio/audio waveform render xong layout
     requestAnimationFrame(() => {
-      const viewport = scrollViewportRef.current;
-      const assistantEl = latestAssistantRef.current;
-      if (!viewport || !assistantEl) {
+      requestAnimationFrame(() => {
+        const doScroll = () => {
+          const viewport = scrollViewportRef.current;
+          const assistantEl = latestAssistantRef.current;
+          if (!viewport || !assistantEl) {
+            pendingAssistantTopRef.current = false;
+            return;
+          }
+          const headerHeight = headerRef.current?.offsetHeight ?? 0;
+          const gap = embedded ? 10 : 12;
+          const targetTop = Math.max(0, assistantEl.offsetTop - headerHeight - gap);
+          viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+        };
+        doScroll();
+        // Retry sau 120ms để bắt được layout shift do ảnh/audio load
+        window.setTimeout(doScroll, 120);
         pendingAssistantTopRef.current = false;
-        return;
-      }
-      const headerHeight = headerRef.current?.offsetHeight ?? 0;
-      const gap = embedded ? 10 : 12;
-      const targetTop = Math.max(0, assistantEl.offsetTop - headerHeight - gap);
-      viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
-      // Một số trình duyệt cập nhật layout ảnh/audio chậm; nhắc lại một lần để đảm bảo
-      // mép trên phản hồi bot nằm sát đầu viewport sau khi stream hoàn tất.
-      window.setTimeout(() => {
-        const latestViewport = scrollViewportRef.current;
-        const latestAssistant = latestAssistantRef.current;
-        if (latestViewport && latestAssistant) {
-          const latestHeader = headerRef.current?.offsetHeight ?? 0;
-          latestViewport.scrollTo({ top: Math.max(0, latestAssistant.offsetTop - latestHeader - gap), behavior: 'smooth' });
-        }
-      }, 90);
-      pendingAssistantTopRef.current = false;
+      });
     });
   }, [embedded, lastAssistantMessageId, messages]);
 

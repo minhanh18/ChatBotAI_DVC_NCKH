@@ -30,6 +30,7 @@ from app.chat.evaluator import (
     is_chitchat_query,
     is_legal_query,
     is_procedure_query,
+    is_focused_aspect_query,
 )
 from app.config import settings
 from app.models.db import Conversation, Message, UsageLog
@@ -231,7 +232,7 @@ def _build_rag_prompt(context: str, query: str, domain_instructions: str) -> str
 - Nếu không tìm thấy thông tin trong ngữ cảnh, trả về đúng chuỗi [[RAG_NO_ANSWER]] và không viết gì thêm.
 - **Xác định rõ phạm vi câu hỏi trước khi trả lời:**
   - Người dùng hỏi **toàn bộ thủ tục** → **Giữ NGUYÊN VẸN tất cả các bước** có trong tài liệu, không bỏ sót bước nào.
-  - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, không liệt kê bước thực hiện, không thêm lưu ý không liên quan đến câu hỏi.
+  - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, KHÔNG liệt kê thêm các mục khác (không thêm trình tự thực hiện, không thêm căn cứ pháp lý dài, không thêm lưu ý không liên quan). Nếu hỏi hồ sơ thì chỉ liệt kê hồ sơ. Nếu hỏi lệ phí thì chỉ nêu lệ phí.
 - **Giữ NGUYÊN các đường link** trong tài liệu, đặt link đúng tại bước tương ứng.
 - Không lặp lại tên tài liệu trong nội dung trả lời (tên đã hiển thị ở khu vực Tham khảo thêm).
 - Không dùng đuôi .pdf trong tên tài liệu. Không mở đầu câu trả lời bằng tên tài liệu (ví dụ: "Theo thông tin trong [tên tài liệu]...") — tên tài liệu đã hiển thị tự động ở khu vực Tham khảo thêm.
@@ -373,7 +374,9 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "  7. Căn cứ pháp lý — đặt ở GẦN CUỐI, sau phần Lưu ý, không đặt ở đầu hoặc giữa câu trả lời.\n"
             "  8. Nếu hợp lý, kết thúc bằng gợi ý tự nhiên những bước tiếp theo, viết liền mạch không cần tiêu đề riêng, "
             "ví dụ: 'Bạn có thể tiến hành trước bằng cách...', 'Nếu chưa có CCCD, bạn nên...' v.v."
-            if is_procedure_query(query)
+            # Chỉ inject 8 mục đầy đủ khi user hỏi TOÀN BỘ thủ tục,
+            # KHÔNG inject khi user chỉ hỏi 1 khía cạnh (hồ sơ/lệ phí/thời gian...)
+            if is_procedure_query(query) and not is_focused_aspect_query(query)
             else ""
         )
         return (
@@ -2063,6 +2066,7 @@ class ChatEngine:
                 "- Chỉ coi các URL trong ngữ cảnh web ở trên là nguồn tham khảo có thể hiển thị; không được tự bịa thêm link khác.\n"
                 "- Nếu dữ liệu web chưa đủ mới hoặc chưa chắc chắn, nói rõ giới hạn thay vì khẳng định chắc chắn.\n"
                 "- Với câu hỏi pháp lý hoặc lệ phí, phải đối chiếu đúng tên thủ tục trong câu hỏi trước khi kết luận mức tiền.\n"
+                "- Lệ phí thường có 2 mức riêng biệt: **nộp trực tiếp** và **nộp trực tuyến** (qua cổng dịch vụ công). Nếu nguồn web trình bày dạng bảng nhiều cột, phải đọc đúng từng cột — KHÔNG gộp chung hoặc nhầm mức của cột này sang cột kia. Trình bày rõ 2 mức riêng nếu có: 'Nộp trực tiếp: X đồng / Nộp trực tuyến (qua cổng DVC): Y đồng'.\n"
                 "- **TUYỆT ĐỐI KHÔNG** dùng `(trang X)` hay `([N], trang X)` cho nội dung từ web — định dạng đó chỉ dùng cho tài liệu nội bộ có số trang thực.\n"
                 "- Khi trích dẫn thông tin từ nguồn web, cuối câu dùng `([N])` trong đó N là số thứ tự nguồn web (bắt đầu từ 1 nếu không có tài liệu nội bộ, hoặc từ số tiếp theo sau tài liệu nội bộ). Ví dụ: câu trích từ nguồn web thứ nhất → `([1])`, nguồn web thứ hai → `([2])`. Các số này khớp với thứ tự trong panel Tham khảo thêm và có thể click được.\n"
                 "- Không dùng `(nguồn)` — dùng `([N])` thay thế.\n"

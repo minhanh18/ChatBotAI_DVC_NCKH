@@ -48,9 +48,12 @@ User gửi câu hỏi
 [1] api/chat.py: nhận request
     ├─ Tạo/lấy Conversation
     ├─ Lưu user Message
-    ├─ Kiểm tra out-of-domain → từ chối ngay nếu ngoài lĩnh vực
-    ├─ Kiểm tra context clarification
-    ├─ rag/query_rewriter.py: rewrite_query()
+    ├─ rag/query_rewriter.py: rewrite_query()  ← TRƯỚC TIÊN (chuẩn hóa không dấu/viết tắt)
+    │   ├─ Bước 1: expand viết tắt offline (dk→đăng ký, bhyt→bảo hiểm y tế...)
+    │   ├─ Bước 2: nếu >30% từ còn ascii-only → gọi Gemini restore dấu (timeout 10s)
+    │   └─ Fail-safe: trả về bản đã expand viết tắt nếu LLM timeout/lỗi
+    ├─ Kiểm tra out-of-domain → từ chối ngay nếu ngoài lĩnh vực (check trên query đã chuẩn hóa)
+    ├─ Kiểm tra context clarification (check trên query đã chuẩn hóa)
     │   ├─ _needs_rewrite(): bỏ qua nếu query đã đủ dấu tiếng Việt
     │   ├─ Gemini xử lý: không dấu / viết tắt / sai chính tả / khẩu ngữ
     │   └─ fail-safe: dùng query gốc nếu lỗi hoặc timeout (3s)
@@ -64,6 +67,12 @@ User gửi câu hỏi
         │
         ▼
 [3] chat/engine.py: sinh câu trả lời (SSE streaming)
+    │   ├─ _domain_instructions(query):
+    │   │   ├─ is_procedure_query() → True: có thể inject hướng dẫn 8 mục
+    │   │   ├─ is_focused_aspect_query() → True (hỏi hồ sơ/lệ phí/thời gian...):
+    │   │   │   └─ KHÔNG inject 8 mục → Gemini chỉ trả lời đúng khía cạnh được hỏi
+    │   │   └─ is_procedure_query() AND NOT is_focused_aspect_query(): inject đầy đủ 8 mục
+    │   ├─ Lệ phí từ web: Gemini được hướng dẫn đọc đúng từng cột bảng trực tiếp/trực tuyến
     │
     ├─── [RAG path] ────────────────────────────────────────────
     │   ├─ Kiểm tra session_cache (overlap ≥ 25%)

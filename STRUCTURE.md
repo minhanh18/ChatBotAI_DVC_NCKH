@@ -166,6 +166,16 @@ chatbot_dvc/
                                   # - pseudonymise_session_key(): HMAC-SHA256
                                   # - mask_pii(): ẩn CCCD/SĐT/email trong logs
                                   # - safe_log_query()
+
+## Các hàm quan trọng trong chat/evaluator.py
+
+| Hàm | Mô tả |
+|-----|-------|
+| `is_greeting_query()` | Phát hiện câu chào → trả lời ngay, không RAG |
+| `is_out_of_domain()` | Từ chối câu hỏi ngoài lĩnh vực hành chính/pháp lý |
+| `is_legal_query()` | Phát hiện câu hỏi pháp lý → điều chỉnh prompt |
+| `is_procedure_query()` | Phát hiện câu hỏi thủ tục hành chính |
+| `is_focused_aspect_query()` | **Mới** — Phát hiện user hỏi 1 khía cạnh cụ thể (hồ sơ / lệ phí / thời gian / điều kiện / nơi nộp...). Khi True → `_domain_instructions()` KHÔNG inject 8 mục đầy đủ → Gemini chỉ trả lời đúng phần được hỏi, không liệt kê thêm các bước khác. |
 ```
 
 ---

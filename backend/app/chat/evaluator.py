@@ -87,6 +87,42 @@ def is_procedure_query(query: str) -> bool:
     return any(re.search(pattern, q) for pattern in PROCEDURE_PATTERNS)
 
 
+def is_focused_aspect_query(query: str) -> bool:
+    """
+    Phát hiện khi user hỏi VỀ MỘT KHÍA CẠNH CỤ THỂ của thủ tục
+    (chỉ hỏi hồ sơ / lệ phí / thời gian / điều kiện / nơi nộp...)
+    thay vì hỏi toàn bộ thủ tục.
+
+    Khi True → _domain_instructions KHÔNG inject hướng dẫn 8 mục đầy đủ,
+    Gemini chỉ trả lời đúng khía cạnh được hỏi.
+    """
+    q = (query or "").lower()
+    _FOCUSED_PATTERNS = [
+        # Hỏi về hồ sơ
+        r"\b(hồ sơ|giấy tờ|tài liệu|văn bản|cần (chuẩn bị|mang|nộp|có)|cần những gì|gồm (những gì|gì|các gì))\b",
+        # Hỏi về lệ phí / chi phí
+        r"\b(lệ phí|phí|chi phí|mất bao nhiêu tiền|giá|bao nhiêu tiền|miễn phí không|có mất phí không)\b",
+        # Hỏi về thời gian
+        r"\b(mất bao lâu|thời gian|bao nhiêu ngày|bao nhiêu giờ|bao lâu|thời hạn giải quyết|khi nào xong)\b",
+        # Hỏi về điều kiện / đối tượng
+        r"\b(điều kiện|yêu cầu|đối tượng|ai (được|có thể|phải)|tiêu chuẩn|tiêu chí)\b",
+        # Hỏi về nơi nộp / địa điểm
+        r"\b(nộp ở đâu|nơi nộp|địa điểm|trụ sở|phòng ban|cơ quan nào|đến đâu|ở đâu nộp)\b",
+        # Hỏi về kết quả / nhận ở đâu
+        r"\b(kết quả|nhận ở đâu|trả kết quả|nhận lại|nhận được gì|nhận như thế nào)\b",
+        # Hỏi riêng về căn cứ pháp lý
+        r"\b(căn cứ pháp lý|quy định (nào|tại đâu)|luật nào|theo (điều|khoản|nghị định|thông tư) nào)\b",
+    ]
+    # Nhưng KHÔNG phải focused nếu có từ "toàn bộ", "tất cả", "đầy đủ", "hướng dẫn", "cách thực hiện"
+    _FULL_PROCEDURE_OVERRIDES = [
+        r"\b(toàn bộ|tất cả|đầy đủ|hướng dẫn (thủ tục|cách|làm)|cách thực hiện|thực hiện như thế nào|quy trình|các bước)\b",
+        r"\b(thủ tục (đăng ký|xin|cấp|làm|nộp)|làm thủ tục|thực hiện thủ tục)\b",
+    ]
+    has_focused = any(re.search(p, q) for p in _FOCUSED_PATTERNS)
+    has_full_override = any(re.search(p, q) for p in _FULL_PROCEDURE_OVERRIDES)
+    return has_focused and not has_full_override
+
+
 def is_out_of_domain(query: str) -> bool:
     """
     Phát hiện câu hỏi rõ ràng ngoài phạm vi hành chính/pháp lý/dịch vụ công.

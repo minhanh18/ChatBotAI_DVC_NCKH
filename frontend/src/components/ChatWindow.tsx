@@ -293,12 +293,19 @@ export function ChatWindow({
           }
           const headerHeight = headerRef.current?.offsetHeight ?? 0;
           const gap = embedded ? 10 : 12;
-          const targetTop = Math.max(0, assistantEl.offsetTop - headerHeight - gap);
+          // Dùng getBoundingClientRect để đọc vị trí thực trong viewport hiện tại
+          // (offsetTop không đúng khi fullscreen vì parent scroll container thay đổi)
+          const elRect = assistantEl.getBoundingClientRect();
+          const vpRect = viewport.getBoundingClientRect();
+          const currentScrollTop = viewport.scrollTop;
+          // Vị trí element so với top của viewport scroll container
+          const elTopRelativeToVp = elRect.top - vpRect.top;
+          const targetTop = Math.max(0, currentScrollTop + elTopRelativeToVp - headerHeight - gap);
           viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
         };
         doScroll();
-        // Retry sau 120ms để bắt được layout shift do ảnh/audio load
-        window.setTimeout(doScroll, 120);
+        // Retry sau 150ms để bắt được layout shift do ảnh/audio load
+        window.setTimeout(doScroll, 150);
         pendingAssistantTopRef.current = false;
       });
     });

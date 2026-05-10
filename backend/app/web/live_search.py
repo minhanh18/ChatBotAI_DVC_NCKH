@@ -475,6 +475,12 @@ def score_search_result(query: str, item: dict) -> float:
     if not is_candidate_url_allowed(url, query):
         return -999.0
     score = score_domain_reliability(domain, query, title) * 4.0
+    # Penalize kết quả dành cho người nước ngoài khi query của người dùng
+    # không đề cập đến nước ngoài/người nước ngoài
+    _foreign_markers = ["người nước ngoài", "nước ngoài", "ngoại kiều", "foreigner", "foreign national"]
+    _query_mentions_foreign = any(m in query.lower() for m in _foreign_markers)
+    if not _query_mentions_foreign and any(m in haystack for m in _foreign_markers):
+        score -= 3.5  # đẩy xuống dưới kết quả cho người Việt Nam
     for token in significant_tokens(query):
         if token in haystack:
             score += 1.0
@@ -492,6 +498,11 @@ def score_search_result(query: str, item: dict) -> float:
 def score_web_result(query: str, result: WebResult) -> float:
     haystack = f"{result.title} {result.snippet} {result.content} {result.url}".lower()
     score = 0.35 + (result.reliability_score * 0.3)
+    # Penalize kết quả cho người nước ngoài khi người dùng không hỏi về nước ngoài
+    _foreign_markers = ["người nước ngoài", "nước ngoài", "ngoại kiều", "foreigner"]
+    _query_mentions_foreign = any(m in query.lower() for m in _foreign_markers)
+    if not _query_mentions_foreign and any(m in haystack for m in _foreign_markers):
+        score -= 0.40  # penalize trong ranking sau fetch
     for token in significant_tokens(query):
         if token in haystack:
             score += 0.08

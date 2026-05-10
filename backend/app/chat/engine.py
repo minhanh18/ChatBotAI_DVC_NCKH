@@ -214,6 +214,7 @@ def _common_format_rules() -> str:
 - Nếu câu trả lời có căn cứ từ luật/nghị định/thông tư, hãy trích nguyên văn điều/khoản đó bằng blockquote (>).
 - Chỉ trích điều khoản pháp luật thực sự — không blockquote hướng dẫn thực tế, ví dụ, hay câu diễn giải.
 - Sau blockquote: diễn giải ngắn gọn bằng ngôn ngữ dễ hiểu, không lặp lại nội dung vừa trích.
+- Khi trích dẫn có nhiều khoản/điểm (1., 2., a), b) ...) hoặc gạch đầu dòng: **mỗi mục phải xuống dòng riêng**, không gộp thành một đoạn liên tục.
 - Không chèn link/số nguồn tham khảo kiểu [1](url) trong thân câu trả lời; nguồn sẽ hiển thị ở khu vực Tham khảo thêm. Chỉ giữ link thao tác trực tiếp như biểu mẫu hoặc cổng nộp hồ sơ nếu URL xuất hiện rõ trong tài liệu/web context."""
 
 
@@ -383,6 +384,8 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "- Nếu chưa đủ căn cứ để khẳng định, phải nói rõ là chưa đủ cơ sở để khẳng định chính xác hoàn toàn.\n"
             "- Không trả lời kiểu chung chung nếu đã có căn cứ cụ thể trong nguồn.\n"
             "- Nếu nguồn có nhiều mục gần giống nhau như tạm trú và thường trú, phải kiểm tra lại tên thủ tục ngay trước mỗi kết luận.\n"
+            "- **Ưu tiên thủ tục dành cho công dân Việt Nam** — nếu câu hỏi không đề cập người nước ngoài/ngoại kiều, CHỈ trả lời về thủ tục của công dân Việt Nam. Thủ tục dành cho người nước ngoài có thể nêu ngắn ở phần Lưu ý cuối cùng nếu hợp lý.\n"
+            "- Không tự ý mở rộng sang chủ đề khác (ví dụ: câu hỏi về tạm trú không cần đề cập căn cước công dân, trừ khi căn cước là thành phần hồ sơ bắt buộc).\n"
             "- Cuối cùng, trước khi hiển thị nguồn tham khảo thì nên có 1 câu chốt lại hoặc câu lưu ý liên quan hoặc hỏi thêm nếu hợp lý hoặc gợi ý các bước nên làm bây giờ.\n"
             f"{guidance}"
             f"{source_scope}"

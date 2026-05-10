@@ -23,9 +23,14 @@ import asyncio
 import hashlib
 import logging
 import re
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Lock bảo vệ genai.configure() — hàm này set global state, không thread-safe
+# Rewrite chạy trong asyncio.to_thread → cần lock để không race với engine
+_GENAI_REWRITE_LOCK = threading.Lock()
 
 # ── Cache in-process ─────────────────────────────────────────────────────────
 _REWRITE_CACHE: dict[str, str] = {}
@@ -200,13 +205,29 @@ async def _call_gemini_rewrite(query: str) -> str:
 
     def _sync_call() -> str:
         key = settings.GEMINI_API_KEY
-        genai.configure(api_key=key)
+        # Lock để tránh race condition: genai.configure() là global state,
+        # rewrite thread và engine thread có thể gọi đồng thời
+        with _GENAI_REWRITE_LOCK:
+            genai.configure(api_key=key)
+
+        # gemini-2.5-flash là thinking model: KHÔNG hỗ trợ temperature < 1.0
+        # → phải dùng temperature=1.0, và tắt thinking (thinking_budget=0)
+        #   để tránh latency cao không cần thiết cho task chuẩn hóa đơn giản.
+        # Với các model khác (gemini-1.5-*): temperature=0.0 vẫn OK.
+        model_name = settings.GEMINI_MODEL
+        is_thinking_model = "2.5" in model_name or "thinking" in model_name.lower()
+
+        gen_config: dict = {"max_output_tokens": 120}
+        if is_thinking_model:
+            gen_config["temperature"] = 1.0          # bắt buộc với thinking model
+            # Tắt thinking để giảm latency (không cần chain-of-thought cho rewrite)
+            gen_config["thinking_config"] = {"thinking_budget": 0}
+        else:
+            gen_config["temperature"] = 0.0          # deterministic với model thường
+
         model = genai.GenerativeModel(
-            settings.GEMINI_MODEL,
-            generation_config={
-                "max_output_tokens": 120,
-                "temperature": 0.0,
-            },
+            model_name,
+            generation_config=gen_config,
         )
         response = model.generate_content(_REWRITE_PROMPT + query)
         return response.text or query

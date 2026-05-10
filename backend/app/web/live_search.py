@@ -408,7 +408,13 @@ async def fetch_page_context(client: httpx.AsyncClient, url: str, title_hint: st
         return None
     raw_content = max(content_candidates, key=len)
     relevant_links = extract_relevant_links(soup, final_url, query)
-    content = extract_focus_content(raw_content, query, settings.WEB_SEARCH_MAX_CONTEXT_CHARS)
+    # Nếu trang có bảng dạng nhiều cột (lệ phí, hồ sơ, trình tự...) → dùng
+    # _extract_table_aware_content để giữ cấu trúc bảng thay vì cắt 4 blocks ngẫu nhiên.
+    # extract_focus_content sẽ bỏ sót dữ liệu trong các hàng/cột không được score cao.
+    if _has_table_structure(raw_content):
+        content = _extract_table_aware_content(raw_content, query, settings.WEB_SEARCH_MAX_CONTEXT_CHARS * 3)
+    else:
+        content = extract_focus_content(raw_content, query, settings.WEB_SEARCH_MAX_CONTEXT_CHARS)
     if relevant_links:
         links_note = "\n".join(f"- {label}: {url}" for label, url in relevant_links)
         content = f"{content}\n\nLiên kết thao tác/hồ sơ trích từ trang:\n{links_note}".strip()
@@ -647,6 +653,129 @@ def score_focus_snippet(snippet: str, query: str) -> float:
     if any(token in snippet_l for token in ["đồng", "mức thu", "lệ phí", "phạt", "hiệu lực"]):
         score += 0.8
     return score
+
+
+
+# Các section header bảng trong trang thủ tục hành chính — dùng để detect bảng.
+# Chú ý: KHÔNG đưa từ phổ biến trong câu văn ("trực tuyến", "trực tiếp") vào đây
+# vì sẽ gây false positive với bài viết thường.
+_TABLE_SECTION_HEADERS = [
+    "cách thức thực hiện", "hình thức nộp", "phí, lệ phí", "phí :", "lệ phí :",
+    "thành phần hồ sơ", "trình tự thực hiện", "yêu cầu, điều kiện", "đối tượng thực hiện",
+    "căn cứ pháp lý", "kết quả thực hiện", "thời hạn giải quyết",
+    # Row headers trong bảng DVC — chỉ là header khi đứng RIÊNG trên 1 dòng ngắn
+]
+
+# Ký hiệu trang có bảng: nhiều dòng ngắn liên tiếp (dữ liệu cột)
+# hoặc có nhiều khoảng trắng liên tiếp trong dòng (tab giả lập cột)
+def _has_table_structure(text: str) -> bool:
+    """
+    Phát hiện trang có bảng dữ liệu nhiều cột/hàng.
+
+    Dấu hiệu:
+    - Có section header bảng quen thuộc → True ngay
+    - Nhiều dòng có khoảng trắng lớn (tab flatten cột) → True
+    - Kết hợp short lines + ít nhất 1 tab-like (tránh false positive với bài viết thường)
+    """
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return False
+    # Dấu hiệu 1: có section header bảng rõ ràng
+    has_header = any(
+        any(h in l.lower() for h in _TABLE_SECTION_HEADERS)
+        for l in lines[:60]
+    )
+    # "Trực tiếp" / "Trực tuyến" là header bảng chỉ khi đứng RIÊNG trên 1 dòng ngắn (< 30 chars)
+    # — không phải khi nằm giữa câu văn dài
+    has_row_header = any(
+        l.lower() in ("trực tiếp", "trực tuyến") or
+        (len(l) < 30 and l.lower() in ("trực tiếp:", "trực tuyến:", "trực tiếp :", "trực tuyến :"))
+        for l in lines[:60]
+    )
+    if has_header or has_row_header:
+        return True
+    # Dấu hiệu 2: nhiều dòng có tab / nhiều khoảng trắng (cột flatten)
+    tab_like_lines = sum(1 for l in lines if "    " in l or "\t" in l)
+    if tab_like_lines >= 3:
+        return True
+    # Dấu hiệu 3: kết hợp nhiều dòng ngắn + ít nhất 1 tab-like
+    # Bài viết thường ít khi có tab — cần cả 2 điều kiện để tránh false positive
+    short_ratio = sum(1 for l in lines if len(l) < 60) / max(len(lines), 1)
+    return short_ratio > 0.55 and tab_like_lines >= 1
+
+
+def _extract_table_aware_content(text: str, query: str, max_chars: int) -> str:
+    """
+    Trích xuất nội dung từ trang có bảng nhiều cột/hàng.
+
+    Chiến lược:
+    1. Tìm section liên quan nhất đến query (dùng keyword matching).
+    2. Giữ TOÀN BỘ section đó — không cắt theo block score như extract_focus_content.
+    3. Nếu content vẫn quá dài → cắt ưu tiên đoạn đầu của section liên quan.
+
+    Mục đích: đảm bảo Gemini nhận đủ mọi hàng bảng (vd: Trực tiếp VÀ Trực tuyến,
+    mọi mức phí, mọi loại hồ sơ) thay vì chỉ thấy hàng được score cao nhất.
+    """
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return text[:max_chars]
+
+    query_l = (query or "").lower()
+    # Keyword từ query để tìm section liên quan
+    query_tokens = set(t for t in re.split(r"\s+", query_l) if len(t) >= 3)
+
+    # Map section header → danh sách dòng thuộc section đó
+    sections: list[tuple[str, list[str]]] = []
+    current_header = "intro"
+    current_lines: list[str] = []
+
+    for line in lines:
+        ll = line.lower()
+        is_header = any(h in ll for h in _TABLE_SECTION_HEADERS) and len(line) < 120
+        if is_header and current_lines:
+            sections.append((current_header, current_lines))
+            current_header = line
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+    if current_lines:
+        sections.append((current_header, current_lines))
+
+    if not sections:
+        return text[:max_chars]
+
+    # Score từng section theo query
+    def score_section(header: str, sec_lines: list[str]) -> float:
+        blob = " ".join([header] + sec_lines).lower()
+        return sum(1.5 if t in header.lower() else 1.0 for t in query_tokens if t in blob)
+
+    scored = sorted(sections, key=lambda s: score_section(s[0], s[1]), reverse=True)
+
+    # Ghép section liên quan nhất trước, sau đó thêm các section khác cho đến hết max_chars
+    result_parts: list[str] = []
+    total = 0
+    for header, sec_lines in scored:
+        block = "\n".join(sec_lines)
+        if total + len(block) + 2 <= max_chars:
+            result_parts.append(block)
+            total += len(block) + 2
+        elif total == 0:
+            # Section đầu tiên quá dài → cắt nhưng giữ phần đầu quan trọng
+            result_parts.append(block[:max_chars])
+            break
+        if total >= max_chars:
+            break
+
+    # Sắp xếp lại theo thứ tự xuất hiện trong văn bản gốc
+    result_parts_ordered: list[str] = []
+    used = set(id(p) for p in result_parts)
+    for _, sec_lines in sections:
+        block = "\n".join(sec_lines)
+        if any(block == p for p in result_parts):
+            result_parts_ordered.append(block)
+
+    combined = "\n\n".join(result_parts_ordered or result_parts)
+    return combined[:max_chars]
 
 
 def extract_focus_content(text: str, query: str, max_chars: int) -> str:

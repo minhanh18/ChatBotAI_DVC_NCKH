@@ -159,24 +159,25 @@ async def upload_document(
     # Commit 1: chỉ metadata — nhanh, tránh timeout khi file lớn
     await db.commit()
 
-    # Commit 2: lưu file_content trong session mới — tách biệt để không block ingest
-    # File đã được ghi ra disk ở trên nên ingestor có thể bắt đầu ngay.
-    # Nếu commit 2 fail (hiếm), ingestor vẫn dùng được file trên disk.
-    async def _save_content_bg(doc_id_: str, data: bytes) -> None:
-        from app.models.db import AsyncSessionLocal as _Session
-        try:
-            async with _Session() as s:
-                d = (await s.execute(
-                    select(Document).where(Document.id == UUID(doc_id_))
-                )).scalar_one_or_none()
-                if d:
-                    d.file_content = data
-                    await s.commit()
-        except Exception as _e:
-            import logging as _log
-            _log.getLogger(__name__).warning("Không lưu được file_content cho %s: %s", doc_id_, _e)
+    # Commit 2: lưu file_content vào DB làm backup — CHỈ khi không dùng Azure.
+    # Khi Azure đã bật, file đã an toàn trên Blob Storage, không cần nhồi thêm
+    # vào PostgreSQL (tránh làm đầy DB với file nhị phân lớn).
+    if not settings.USE_AZURE_STORAGE:
+        async def _save_content_bg(doc_id_: str, data: bytes) -> None:
+            from app.models.db import AsyncSessionLocal as _Session
+            try:
+                async with _Session() as s:
+                    d = (await s.execute(
+                        select(Document).where(Document.id == UUID(doc_id_))
+                    )).scalar_one_or_none()
+                    if d:
+                        d.file_content = data
+                        await s.commit()
+            except Exception as _e:
+                import logging as _log
+                _log.getLogger(__name__).warning("Không lưu được file_content cho %s: %s", doc_id_, _e)
 
-    asyncio.create_task(_save_content_bg(doc_id, content))
+        asyncio.create_task(_save_content_bg(doc_id, content))
 
     # Ingest chạy concurrently — không block response, không block request khác
     asyncio.create_task(ingest_document(doc_id))

@@ -445,6 +445,13 @@ def build_search_queries(query: str) -> list[str]:
             f"site:dichvucong.gov.vn {base}",
             f"{base} biểu mẫu hồ sơ dichvucong.gov.vn",
         ])
+    # Khi query hỏi về lệ phí → bổ sung luatvietnam + thuvienphapluat để tìm mức phí
+    # chính xác khi DVC chưa ghi rõ (ví dụ: trực tuyến = miễn phí / giảm 50%)
+    if any(k in base_l for k in ["lệ phí", "mức phí", "mức thu", "phí đăng ký", "phí nộp"]):
+        variants.extend([
+            f"site:luatvietnam.vn {base}",
+            f"site:thuvienphapluat.vn {base}",
+        ])
     if any(k in base_l for k in ["thuế", "tncn", "thu nhập", "khai thuế", "quyết toán", "tính thuế"]):
         variants.extend([
             f"site:gdt.gov.vn {base}",

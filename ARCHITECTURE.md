@@ -53,6 +53,9 @@ User gửi câu hỏi
     │   ├─ Bước 2: nếu >30% từ còn ascii-only → gọi Gemini restore dấu (timeout 10s)
     │   └─ Fail-safe: trả về bản đã expand viết tắt nếu LLM timeout/lỗi
     ├─ Kiểm tra out-of-domain → từ chối ngay nếu ngoài lĩnh vực (check trên query đã chuẩn hóa)
+    │   └─ **Whitelist qua system prompt** (`_get_identity()`): LLM được lệnh từ chối mọi query
+    │      ngoài hành chính/pháp luật/dịch vụ công, kể cả khi có web/RAG context.
+    │      Khi từ chối: citations bị xoá, source lead bị bỏ qua (`_is_ood_refusal()`).
     ├─ Kiểm tra context clarification (check trên query đã chuẩn hóa)
     │   ├─ _needs_rewrite(): bỏ qua nếu query đã đủ dấu tiếng Việt
     │   ├─ Gemini xử lý: không dấu / viết tắt / sai chính tả / khẩu ngữ
@@ -79,11 +82,16 @@ User gửi câu hỏi
     │   ├─ _build_rag_context() → xây system prompt với chunks
     │   ├─ _generate_rag_answer() → Gemini streaming
     │   ├─ _rag_evaluator: đánh giá [[RAG_NO_ANSWER]] hay đủ
+    │   │   └─ `_RAG_NO_ANSWER_MARKERS` bao gồm: "không thể được trả lời dựa trên",
+    │   │      "các tài liệu này chủ yếu liên quan đến" (và các biến thể) để đảm bảo
+    │   │      fallback web khi Gemini báo tài liệu không phù hợp chủ đề
     │   └─ Nếu không đủ → fallback sang Web (force_web=True)
     │
     ├─── [AI + Web path] ───────────────────────────────────────
     │   ├─ web/live_search.py: Tavily search (song song)
     │   │   ├─ build_search_queries() → tạo nhiều query variants
+    │   │   │   ├─ DVC + bocongan variants cho thủ tục/đăng ký/tạm trú
+    │   │   │   └─ luatvietnam.vn + thuvienphapluat.vn variants cho "lệ phí" (tránh chỉ lấy DVC)
     │   │   ├─ asyncio.gather() → Tavily search song song
     │   │   ├─ score_web_result() → ranking + filtering
     │   │   └─ fetch_page_context() → lấy nội dung trang (song song)
@@ -95,6 +103,8 @@ User gửi câu hỏi
         ├─ _normalize_legal_answer_structure()
         ├─ chat/legal_enricher.py: trích link DVC, căn cứ pháp lý
         ├─ Lưu Message + UsageLog vào DB
+        │   └─ `query_text`: lưu câu hỏi gốc (bỏ prefix "Chủ đề hiện tại: X. Câu hỏi:")
+        │      để monitoring admin hiển thị đúng câu hỏi thực tế người dùng đặt
         └─ Gửi "done" SSE event
 ```
 

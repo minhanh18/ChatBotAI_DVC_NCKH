@@ -1376,6 +1376,15 @@ _RAG_NO_ANSWER_MARKERS = (
     "câu hỏi này không liên quan đến tài liệu",
     "tài liệu không phù hợp với câu hỏi",
     "ngữ cảnh được cung cấp không liên quan",
+    # Phrase Gemini dùng khi tài liệu RAG không chứa thông tin cần thiết
+    # nhưng KHÔNG khớp các marker cũ → fallback web không trigger (bug đã gặp)
+    "không thể được trả lời dựa trên",
+    "không thể trả lời dựa trên",
+    "không thể cung cấp thông tin dựa trên tài liệu",
+    "tài liệu hiện có không đủ thông tin",
+    "các tài liệu này chủ yếu liên quan đến",
+    "tài liệu này chủ yếu liên quan đến",
+    "các tài liệu hiện có chủ yếu",
 )
 
 
@@ -1865,10 +1874,18 @@ class ChatEngine:
             await db.flush()
 
             from app.utils.data_crypto import mask_pii as _mask_pii
+            # Lưu câu hỏi sạch vào log — bỏ prefix "Chủ đề hiện tại: X. Câu hỏi: Y"
+            # để monitoring hiển thị đúng câu hỏi thực tế người dùng đặt
+            import re as _re
+            _topic_strip = _re.match(
+                r'^Chủ đề hiện tại:\s*[^.]+\.\s*Câu hỏi:\s*(.+)$',
+                query.strip(), _re.IGNORECASE | _re.DOTALL
+            )
+            _log_query = _topic_strip.group(1).strip() if _topic_strip else query
             usage = UsageLog(
                 conversation_id=conversation.id,
                 message_id=msg.id,
-                query_text=_mask_pii(query[:500]),
+                query_text=_mask_pii(_log_query[:500]),
                 answer_mode=answer_mode_value,
                 tokens_used=tokens_used,
                 latency_ms=latency_ms,

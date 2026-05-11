@@ -371,9 +371,12 @@ export function AdminDashboard({ auth }: { auth: AdminAuth }) {
                 const maxVal = Math.max(...daily.map((d: any) => d.total), 1);
                 const h = Math.max((day.total / maxVal) * 100, 4);
                 return (
-                  <div key={day.day} className="flex-1 flex flex-col items-center gap-1 group">
-                    <div className="w-full bg-[#b2694c] rounded-t-sm transition-all group-hover:bg-[#9e5d46]" style={{ height: `${h}%` }} title={`${day.day}: ${day.total} messages`} />
-                    <span className="text-[9px] text-[#9a7868] rotate-45 origin-left whitespace-nowrap">{(day.day || '').slice(5)}</span>
+                  <div key={day.day} className="flex-1 flex flex-col items-center gap-1 group" style={{ alignSelf: 'stretch' }}>
+                    {/* flex-1 wrapper căn bar xuống đáy, chiếm toàn bộ chiều cao trừ label */}
+                    <div className="flex-1 flex items-end w-full">
+                      <div className="w-full bg-[#b2694c] rounded-t-sm transition-all group-hover:bg-[#9e5d46]" style={{ height: `${h}%` }} title={`${day.day}: ${day.total} messages`} />
+                    </div>
+                    <span className="text-[9px] text-[#9a7868] rotate-45 origin-left whitespace-nowrap shrink-0">{(day.day || '').slice(5)}</span>
                   </div>
                 );
               })}

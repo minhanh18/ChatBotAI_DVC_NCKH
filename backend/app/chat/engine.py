@@ -1295,6 +1295,30 @@ def _normalize_legal_answer_structure(text: str) -> str:
     return content
 
 
+def _is_ood_refusal(text: str) -> bool:
+    """
+    Phát hiện câu trả lời là lời từ chối câu hỏi ngoài phạm vi hành chính.
+    Dùng để bỏ citations và source lead khi LLM từ chối thay vì trả lời.
+    """
+    normalized = " ".join((text or "").lower().split())
+    _REFUSAL_MARKERS = (
+        "không thuộc phạm vi hỗ trợ",
+        "ngoài phạm vi hỗ trợ",
+        "không thuộc phạm vi",
+        "ngoài phạm vi",
+        "không thuộc các lĩnh vực hành chính",
+        "không thuộc lĩnh vực hành chính",
+        "không hỗ trợ câu hỏi",
+        "câu hỏi của bạn về thời tiết",
+        "câu hỏi của bạn về du lịch",
+        "câu hỏi của bạn về",  # + "không thuộc"
+    )
+    # Marker chung "câu hỏi của bạn về" chỉ tính là refusal nếu đi kèm "không thuộc"
+    if "câu hỏi của bạn về" in normalized and "không thuộc" in normalized:
+        return True
+    return any(marker in normalized for marker in _REFUSAL_MARKERS[:-1])
+
+
 def _ensure_rag_source_lead(text: str, citations: list[Citation]) -> str:
     """
     Chèn câu dẫn nhập tên tài liệu KHI VÀ CHỈ KHI tài liệu có hint lead được cấu hình sẵn
@@ -1804,7 +1828,13 @@ class ChatEngine:
             if is_legal_query(query) or is_procedure_query(query):
                 full_text = _normalize_legal_answer_structure(full_text)
 
-            if response_mode == AnswerMode.RAG and full_text and not is_greeting:
+            # Nếu LLM từ chối câu hỏi ngoài phạm vi → xóa citations + bỏ source lead
+            # (không hiển thị tài liệu nội bộ khi không dùng để trả lời)
+            _refusal = _is_ood_refusal(full_text)
+            if _refusal:
+                citations = []
+
+            if response_mode == AnswerMode.RAG and full_text and not is_greeting and not _refusal:
                 full_text = _ensure_rag_source_lead(full_text, citations)
 
             # Token chính xác: dùng Gemini usage_metadata nếu có, fallback ước lượng
@@ -1939,7 +1969,7 @@ class ChatEngine:
                 except Exception as _enrich_err:
                     logger.warning("Enrichment thất bại (bỏ qua): %s", _enrich_err)
 
-            if citations and not is_greeting and not assessment.get("should_refuse_precise"):
+            if citations and not is_greeting and not assessment.get("should_refuse_precise") and not _refusal:
                 yield _sse(StreamEvent("citations", [asdict(c) for c in citations]))
 
             # ── Done event gửi SAU enrichment nhưng latency_ms đo TRƯỚC enrichment ──

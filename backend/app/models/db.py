@@ -21,17 +21,18 @@ from app.config import settings
 # connect_args với ssl="require" + statement_timeout tránh connection treo.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    pool_size=15,               # [Đã sửa] Tăng lên 15 để xử lý đa luồng băm vector PDF
-    max_overflow=20,            # [Đã sửa] Tăng dự phòng lên 20 (Tổng sức chứa = 35 kết nối)
-    pool_recycle=180,           # [Giữ nguyên] Rất tốt để chống Render ngắt kết nối
-    pool_pre_ping=True,         # [Giữ nguyên]
-    pool_timeout=60,            # [Đã sửa] Tăng lên 60s để các tiến trình kiên nhẫn chờ đợi nhau hơn
+    pool_size=15,
+    max_overflow=20,
+    pool_recycle=180,
+    pool_pre_ping=True,
+    pool_timeout=60,
     echo=settings.DEBUG,
     connect_args={
-        "ssl": "require",       # [Giữ nguyên] Supabase yêu cầu SSL bắt buộc
+        "ssl": "require",
+        "prepared_statement_cache_size": 0,
         "server_settings": {
-            "statement_timeout": "30000",       
-            "idle_in_transaction_session_timeout": "60000",  
+            "statement_timeout": "30000",
+            "idle_in_transaction_session_timeout": "60000",
         },
     },
 )

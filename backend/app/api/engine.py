@@ -4,6 +4,7 @@ Chat Engine — lõi sinh câu trả lời với streaming.
 và chỉ hiển thị nguồn đã thực sự dùng.
 """
 
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from __future__ import annotations
 
 import asyncio
@@ -1648,13 +1649,22 @@ class ChatEngine:
         )
 
     def _make_model(self) -> genai.GenerativeModel:
-        """Tạo model mới với key khả dụng (không cooling)."""
+        """Tạo model mới với key khả dụng và nới lỏng bộ lọc an toàn."""
         key = _key_pool.get_available_key()
         if key:
             genai.configure(api_key=key)
+
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
         return genai.GenerativeModel(
             settings.GEMINI_MODEL,
             generation_config=self._gen_config,
+            safety_settings=safety_settings
         )
 
     async def stream_response(

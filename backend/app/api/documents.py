@@ -135,12 +135,13 @@ async def upload_document(
     )
     doc_meta["uploaded_at"] = datetime.utcnow().isoformat()
 
+    # Tìm đoạn này (khoảng dòng 132):
     doc = Document(
         id=UUID(doc_id),
         dataset_id=UUID(dataset_id),
         name=file.filename or f"document_{doc_id}",
         file_path=str(file_path),
-        file_content=None,   # sẽ được lưu sau commit metadata để tránh timeout với file lớn
+        file_content=content, 
         file_type=ext,
         file_size=len(content),
         status="pending",
@@ -162,23 +163,6 @@ async def upload_document(
     # Commit 2: lưu file_content vào DB làm backup — CHỈ khi không dùng R2.
     # Khi R2 đã bật, file đã an toàn trên Cloudflare R2, không cần nhồi thêm
     # vào PostgreSQL (tránh làm đầy DB với file nhị phân lớn).
-    if not getattr(settings, 'USE_R2_STORAGE', False):
-        async def _save_content_bg(doc_id_: str, data: bytes) -> None:
-            from app.models.db import AsyncSessionLocal as _Session
-            try:
-                async with _Session() as s:
-                    d = (await s.execute(
-                        select(Document).where(Document.id == UUID(doc_id_))
-                    )).scalar_one_or_none()
-                    if d:
-                        d.file_content = data
-                        await s.commit()
-            except Exception as _e:
-                import logging as _log
-                _log.getLogger(__name__).warning("Không lưu được file_content cho %s: %s", doc_id_, _e)
-
-        asyncio.create_task(_save_content_bg(doc_id, content))
-
     # Ingest chạy concurrently — không block response, không block request khác
     asyncio.create_task(ingest_document(doc_id))
 
@@ -318,113 +302,77 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(get_db), 
 
 
 @router.api_route("/{document_id}/file", methods=["GET", "HEAD"])
-async def serve_document_file(
-    request: Request,
-    document_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Serve file tài liệu gốc để xem trong trình duyệt.
-    Hỗ trợ cả GET (nội dung) và HEAD (kiểm tra tồn tại) để PdfViewerModal pre-check được.
-    Không yêu cầu xác thực admin để iframe trong chatbot có thể load được.
-    """
+async def serve_document_file(request: Request, document_id: str, db: AsyncSession = Depends(get_db)):
     doc = (await db.execute(
         select(Document).where(Document.id == UUID(document_id))
     )).scalar_one_or_none()
+    
     if not doc:
         raise HTTPException(404, "Tài liệu không tồn tại")
 
-    file_path = Path(doc.file_path) if doc.file_path else None
-    if not file_path or not file_exists(str(file_path)):
-        # Fallback 1: tìm theo UPLOAD_DIR + doc_id + ext
-        for ext in settings.ALLOWED_EXTENSIONS:
-            candidate = Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
-            if file_exists(str(candidate)):
-                file_path = candidate
-                break
+    # --- BƯỚC 1: ƯU TIÊN LẤY DỮ LIỆU TỪ DATABASE (FILE_CONTENT) ---
+    # Điều này giúp file luôn khả dụng kể cả khi Render xóa thư mục /tmp
+    file_bytes = doc.file_content
+    
+    # --- BƯỚC 2: NẾU DB TRỐNG, MỚI TÌM TRÊN ĐĨA CỨNG (FALLBACK) ---
+    if file_bytes is None:
+        file_path = Path(doc.file_path) if doc.file_path else None
+        # Logic tìm kiếm file trên disk (giữ lại để hỗ trợ tài liệu cũ)
+        if not file_path or not file_exists(str(file_path)):
+            for ext in settings.ALLOWED_EXTENSIONS:
+                candidate = Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
+                if file_exists(str(candidate)):
+                    file_path = candidate
+                    break
+        
+        if file_path and file_exists(str(file_path)):
+            # Đọc file từ disk thành bytes
+            from app.utils.storage import load_file as _load_file
+            file_bytes = await asyncio.to_thread(_load_file, str(file_path))
 
-    if not file_path or not file_exists(str(file_path)):
-        # Fallback 2: tìm theo tên gốc trong UPLOAD_DIR
-        if doc.name:
-            candidate = Path(settings.UPLOAD_DIR) / doc.name
-            if file_exists(str(candidate)):
-                file_path = candidate
+    # --- BƯỚC 3: TRẢ VỀ PHẢN HỒI ---
+    if file_bytes:
+        # Xác định định dạng file
+        ft = (doc.file_type or '').lower().lstrip('.')
+        media_type = {
+            'pdf': 'application/pdf',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'doc': 'application/msword',
+            'txt': 'text/plain; charset=utf-8',
+        }.get(ft) or 'application/octet-stream'
 
-    if not file_path or not file_exists(str(file_path)):
-        # Fallback 3: serve từ Azure Blob hoặc DB bytes
-        from app.utils.storage import load_file as _load_file
-        file_bytes = await asyncio.to_thread(_load_file, str(file_path)) if file_path else None
-        if file_bytes is None and doc.file_content:
-            file_bytes = doc.file_content
-
-        if file_bytes:
-            # Xác định media_type từ file_type trong DB (chính xác hơn guess từ tên)
-            ft = (doc.file_type or '').lower().lstrip('.')
-            media_type = {
-                'pdf': 'application/pdf',
-                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'doc': 'application/msword',
-                'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'txt': 'text/plain; charset=utf-8',
-            }.get(ft) or mimetypes.guess_type(doc.name)[0] or 'application/octet-stream'
-
-            if request.method == "HEAD":
-                from starlette.responses import Response
-                return Response(
-                    status_code=200,
-                    headers={
-                        "Content-Type": media_type,
-                        "Content-Length": str(len(file_bytes)),
-                        "Content-Disposition": "inline",
-                        "Cache-Control": "private, max-age=3600",
-                    },
-                )
-            from starlette.responses import Response as BytesResponse
-            return BytesResponse(
-                content=file_bytes,
-                media_type=media_type,
+        # Xử lý HEAD request (chỉ lấy header)
+        if request.method == "HEAD":
+            from starlette.responses import Response
+            return Response(
+                status_code=200,
                 headers={
-                    "Content-Disposition": f'inline; filename="{doc.name}"',
+                    "Content-Type": media_type,
+                    "Content-Length": str(len(file_bytes)),
+                    "Content-Disposition": "inline",
                     "Cache-Control": "private, max-age=3600",
-                    "X-Content-Type-Options": "nosniff",
                 },
             )
-        # Document cũ (trước khi có cột file_content) hoặc file_content=NULL
-        # Trả về thông tin document để frontend có thể hiển thị metadata thay vì 404 blank
-        raise HTTPException(
-            404,
-            detail={
-                "message": "File gốc không còn trên server (ephemeral filesystem đã reset sau sleep).",
-                "hint": "Tài liệu đã được index và vẫn dùng được cho RAG. Nếu cần xem file, hãy upload lại.",
-                "document_name": doc.name,
-                "document_status": doc.status,
-                "chunk_count": doc.chunk_count or 0,
-            }
-        )
 
-    media_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-
-    # HEAD request: chỉ trả header, không trả body
-    if request.method == "HEAD":
-        from starlette.responses import Response
-        return Response(
-            status_code=200,
+        # Xử lý GET request (trả về nội dung file)
+        from starlette.responses import Response as BytesResponse
+        return BytesResponse(
+            content=file_bytes,
+            media_type=media_type,
             headers={
-                "Content-Type": media_type,
-                "Content-Disposition": "inline",
+                "Content-Disposition": f'inline; filename="{doc.name}"',
                 "Cache-Control": "private, max-age=3600",
+                "X-Content-Type-Options": "nosniff",
             },
         )
 
-    return FileResponse(
-        path=str(file_path),
-        media_type=media_type,
-        filename=doc.name,
-        headers={
-            "Content-Disposition": "inline",
-            "Cache-Control": "private, max-age=3600",
-            "X-Content-Type-Options": "nosniff",
-        },
+    # Nếu cả DB và Disk đều không có file
+    raise HTTPException(
+        404,
+        detail={
+            "message": "Không tìm thấy nội dung file.",
+            "hint": "Hãy upload lại tài liệu này để lưu trữ vào Database vĩnh viễn.",
+        }
     )
 
 

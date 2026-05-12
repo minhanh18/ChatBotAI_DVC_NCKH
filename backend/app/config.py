@@ -42,11 +42,11 @@ class Settings(BaseSettings):
     # Tạo bằng: python -c "import secrets; print(secrets.token_hex(32))"
     SESSION_HMAC_KEY: str = ""
 
-    # ── LLM: Gemini Flash 2.5 (hardcoded, không đổi trên UI) ─
+    # ── LLM: Gemini 2.5 Pro (hardcoded, không đổi trên UI) ─
     GEMINI_API_KEY: str = ""
     GEMINI_API_KEYS: list[str] = []   # Danh sách key phụ để xoay vòng khi quota exhausted
     TAVILY_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-2.5-pro"
     GEMINI_TEMPERATURE: float = 0.3
     GEMINI_MAX_OUTPUT_TOKENS: int = 4096
     GEMINI_TOP_P: float = 0.8

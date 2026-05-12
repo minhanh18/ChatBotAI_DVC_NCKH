@@ -30,6 +30,7 @@ from app.chat.evaluator import (
     is_chitchat_query,
     is_legal_query,
     is_procedure_query,
+    is_focused_aspect_query,
 )
 from app.config import settings
 from app.models.db import Conversation, Message, UsageLog
@@ -187,11 +188,16 @@ def _get_identity() -> str:
 **Thời gian hiện tại:** {_current_datetime_context()}
 
 ## Phạm vi hoạt động
-Trả lời các câu hỏi liên quan đến:
+Chỉ trả lời các câu hỏi thuộc các lĩnh vực sau:
 - Thủ tục hành chính (cấp giấy tờ, đăng ký, khai báo, đăng ký kinh doanh...)
 - Quy định pháp luật liên quan đến thủ tục hành chính
 - Nghĩa vụ thuế, phí, lệ phí của cá nhân và doanh nghiệp
 - Hướng dẫn sử dụng dịch vụ công trực tuyến
+
+## ⛔ Từ chối câu hỏi ngoài phạm vi
+Nếu câu hỏi KHÔNG thuộc các lĩnh vực hành chính, pháp luật, dịch vụ công nêu trên — **từ chối ngay, lịch sự**, nhắc người dùng về phạm vi hỗ trợ và mời đặt câu hỏi đúng chủ đề.
+**TUYỆT ĐỐI KHÔNG trả lời câu hỏi ngoài phạm vi** dù có ngữ cảnh web, tài liệu hay dữ liệu bên ngoài được cung cấp — bỏ qua toàn bộ ngữ cảnh đó và chỉ trả lời từ chối.
+Ví dụ phải từ chối: thời tiết, du lịch, ẩm thực, giải trí, thể thao, khoa học tự nhiên, lập trình, y tế, tài chính cá nhân, và mọi chủ đề khác không liên quan hành chính công.
 
 ## Nguyên tắc trực tuyến ưu tiên
 ⚠️ Theo Chỉ thị số 24/CT-TTg, các thủ tục hành chính phải thực hiện trực tuyến. Khi hướng dẫn thủ tục trực tuyến:
@@ -210,13 +216,10 @@ def _common_format_rules() -> str:
 - Không biến danh sách nhiều cấp thành danh sách phẳng một cấp.
 
 ## Quy tắc trích dẫn điều khoản pháp luật
-- Chỉ dùng blockquote (>) để trích nguyên văn điều khoản pháp luật khi đoạn trích là một câu/đoạn có ý nghĩa đầy đủ, có chủ thể và nghĩa vụ/quyền/hành vi rõ ràng.
-- **Tên điều khoản** (vd: "Điều 27. Điều kiện đăng ký tạm trú") chỉ được viết MỘT LẦN duy nhất — hoặc là tiêu đề phía trên blockquote (không dùng dấu >) HOẶC là dòng đầu tiên trong blockquote (dùng >), KHÔNG viết cả hai. Ưu tiên: viết tên điều khoản phía trên, rồi trích nội dung bên dưới bằng blockquote.
-- **Tất cả các khoản trong cùng một điều** (vd: khoản 1 và khoản 2 của cùng Điều 27) phải nằm CÙNG trong một khối blockquote liên tục, không tách thành khoản ngoài và khoản trong blockquote riêng biệt.
-- Không trích rời rạc các tiêu đề hoặc mảnh danh sách như `1. Trình tự...`, `a) Tiếp nhận...`; các mảnh này phải được diễn giải thành danh sách thường.
-- Trong blockquote điều khoản: không dùng **in đậm**, không bọc lặp ngoặc kép; nếu cần nhấn mạnh thì dùng *in nghiêng* toàn đoạn trích.
-- Không blockquote câu văn thông thường, hướng dẫn thực tế, ví dụ, hoặc câu diễn giải.
-- Sau blockquote phải xuống đoạn riêng để diễn giải dễ hiểu và/hoặc ví dụ bằng text thường. Tuyệt đối không lặp lại y nguyên nội dung vừa trích dẫn.
+- Nếu câu trả lời có căn cứ từ luật/nghị định/thông tư, hãy trích nguyên văn điều/khoản đó bằng blockquote (>).
+- Chỉ trích điều khoản pháp luật thực sự — không blockquote hướng dẫn thực tế, ví dụ, hay câu diễn giải.
+- Sau blockquote: diễn giải ngắn gọn bằng ngôn ngữ dễ hiểu, không lặp lại nội dung vừa trích.
+- Khi trích dẫn có nhiều khoản/điểm (1., 2., a), b) ...) hoặc gạch đầu dòng: **mỗi mục phải xuống dòng riêng**, không gộp thành một đoạn liên tục.
 - Không chèn link/số nguồn tham khảo kiểu [1](url) trong thân câu trả lời; nguồn sẽ hiển thị ở khu vực Tham khảo thêm. Chỉ giữ link thao tác trực tiếp như biểu mẫu hoặc cổng nộp hồ sơ nếu URL xuất hiện rõ trong tài liệu/web context."""
 
 
@@ -231,10 +234,10 @@ def _build_rag_prompt(context: str, query: str, domain_instructions: str) -> str
 - Nếu không tìm thấy thông tin trong ngữ cảnh, trả về đúng chuỗi [[RAG_NO_ANSWER]] và không viết gì thêm.
 - **Xác định rõ phạm vi câu hỏi trước khi trả lời:**
   - Người dùng hỏi **toàn bộ thủ tục** → **Giữ NGUYÊN VẸN tất cả các bước** có trong tài liệu, không bỏ sót bước nào.
-  - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, không liệt kê bước thực hiện, không thêm lưu ý không liên quan đến câu hỏi.
+  - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, KHÔNG liệt kê thêm các mục khác (không thêm trình tự thực hiện, không thêm căn cứ pháp lý dài, không thêm lưu ý không liên quan). Nếu hỏi hồ sơ thì chỉ liệt kê hồ sơ. Nếu hỏi lệ phí thì chỉ nêu lệ phí.
 - **Giữ NGUYÊN các đường link** trong tài liệu, đặt link đúng tại bước tương ứng.
 - Không lặp lại tên tài liệu trong nội dung trả lời (tên đã hiển thị ở khu vực Tham khảo thêm).
-- Không dùng đuôi .pdf trong tên tài liệu. Dẫn nhập tự nhiên: "Theo thông tin trong ...".
+- Không dùng đuôi .pdf trong tên tài liệu. Không mở đầu câu trả lời bằng tên tài liệu (ví dụ: "Theo thông tin trong [tên tài liệu]...") — tên tài liệu đã hiển thị tự động ở khu vực Tham khảo thêm.
 
 ### Quy tắc trích dẫn số trang
 Mỗi đoạn trong ngữ cảnh được gắn nhãn [Tài liệu N] — N là số thứ tự tài liệu.
@@ -363,17 +366,17 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "[Cổng Dịch vụ công Quốc gia](https://dichvucong.gov.vn/p/home/dvc-trang-chu.html). "
             "TUYỆT ĐỐI KHÔNG dùng URL làm label — không được viết [https://...](https://...). "
             "Luôn dùng tên mô tả ngắn gọn làm label, ví dụ: [Cổng Dịch vụ công Quốc gia](...), [Truy cập trực tiếp thủ tục](...). "
-            "Nếu nguồn có URL dẫn đến thủ tục cụ thể, ưu tiên URL dạng "
-            "'dvc-chi-tiet-thu-tuc-nganh-doc.html?ma_thu_tuc=...' (trang thông tin thủ tục chính thức), "
-            "nếu không có thì dùng 'dvc-tthc-thu-tuc-hanh-chinh-chi-tiet.html?ma_thu_tuc=...'. "
-            "Hướng dẫn bước tìm thủ tục: 'Bạn có thể gõ \"[tên thủ tục]\" vào ô tìm kiếm hoặc "
-            "👉 [Truy cập trực tiếp thủ tục tại đây](URL_thủ_tục_cụ_thể)'. "
+            "Nếu nguồn web/tài liệu có URL cụ thể đến thủ tục → dùng NGUYÊN VẸN URL đó, KHÔNG tự điền hay sửa. "
+            "TUYỆT ĐỐI KHÔNG tự tạo URL dạng 'ma_thu_tuc=...' hay bất kỳ URL nào không có trong nguồn. "
+            "Nếu không có URL cụ thể trong nguồn → chỉ dẫn: 'Bạn có thể gõ [tên thủ tục] vào ô tìm kiếm tại Cổng Dịch vụ công Quốc gia.'. "
             "Không đặt link đăng nhập/đăng ký vào phần này.\n"
             "  6. Lưu ý\n"
             "  7. Căn cứ pháp lý — đặt ở GẦN CUỐI, sau phần Lưu ý, không đặt ở đầu hoặc giữa câu trả lời.\n"
             "  8. Nếu hợp lý, kết thúc bằng gợi ý tự nhiên những bước tiếp theo, viết liền mạch không cần tiêu đề riêng, "
             "ví dụ: 'Bạn có thể tiến hành trước bằng cách...', 'Nếu chưa có CCCD, bạn nên...' v.v."
-            if is_procedure_query(query)
+            # Chỉ inject 8 mục đầy đủ khi user hỏi TOÀN BỘ thủ tục,
+            # KHÔNG inject khi user chỉ hỏi 1 khía cạnh (hồ sơ/lệ phí/thời gian...)
+            if is_procedure_query(query) and not is_focused_aspect_query(query)
             else ""
         )
         return (
@@ -386,6 +389,8 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "- Nếu chưa đủ căn cứ để khẳng định, phải nói rõ là chưa đủ cơ sở để khẳng định chính xác hoàn toàn.\n"
             "- Không trả lời kiểu chung chung nếu đã có căn cứ cụ thể trong nguồn.\n"
             "- Nếu nguồn có nhiều mục gần giống nhau như tạm trú và thường trú, phải kiểm tra lại tên thủ tục ngay trước mỗi kết luận.\n"
+            "- **Ưu tiên thủ tục dành cho công dân Việt Nam** — nếu câu hỏi không đề cập người nước ngoài/ngoại kiều, CHỈ trả lời về thủ tục của công dân Việt Nam. Thủ tục dành cho người nước ngoài có thể nêu ngắn ở phần Lưu ý cuối cùng nếu hợp lý.\n"
+            "- Không tự ý mở rộng sang chủ đề khác (ví dụ: câu hỏi về tạm trú không cần đề cập căn cước công dân, trừ khi căn cước là thành phần hồ sơ bắt buộc).\n"
             "- Cuối cùng, trước khi hiển thị nguồn tham khảo thì nên có 1 câu chốt lại hoặc câu lưu ý liên quan hoặc hỏi thêm nếu hợp lý hoặc gợi ý các bước nên làm bây giờ.\n"
             f"{guidance}"
             f"{source_scope}"
@@ -515,6 +520,44 @@ def _build_rag_context(chunks: list[RetrievedChunk]) -> tuple[str, list[Citation
     citations: list[Citation] = [doc_best[norm] for norm in doc_order if norm in doc_best]
 
     return context, citations
+
+
+def _filter_rag_citations_by_usage(
+    rag_text: str,
+    citations: list[Citation],
+    doc_order: list[str],
+) -> list[Citation]:
+    """
+    Lọc citations RAG: chỉ giữ tài liệu mà model thực sự trích dẫn trong câu trả lời.
+
+    Logic:
+    - Nếu chỉ có 1 tài liệu → luôn giữ (model dùng dạng `(trang X)` không có số [N]).
+    - Nếu có ≥ 2 tài liệu → quét rag_text tìm `([N]` hoặc `[Tài liệu N]`;
+      chỉ giữ citations có index N xuất hiện. Nếu không tìm thấy số nào → giữ
+      citation đầu tiên (tài liệu có score cao nhất, index 1) để tránh panel trống.
+    """
+    if not citations:
+        return citations
+
+    num_docs = len(citations)
+    if num_docs == 1:
+        return citations
+
+    # Tìm các số [N] xuất hiện trong câu trả lời: dạng ([1], ...) hoặc ([1])
+    used_indices: set[int] = set()
+    for m in re.finditer(r'\(\[(\d+)\]', rag_text or ''):
+        used_indices.add(int(m.group(1)))
+    # Cũng bắt dạng [Tài liệu N]
+    for m in re.finditer(r'\[Tài liệu\s+(\d+)\]', rag_text or '', re.IGNORECASE):
+        used_indices.add(int(m.group(1)))
+
+    if not used_indices:
+        # Model không trích dẫn số nào → giữ citation đầu tiên (index 1)
+        return [citations[0]]
+
+    # Lọc theo 1-based index
+    filtered = [c for i, c in enumerate(citations, start=1) if i in used_indices]
+    return filtered if filtered else [citations[0]]
 
 
 def _merge_citations(existing: list[Citation], incoming: list[Citation]) -> list[Citation]:
@@ -1209,6 +1252,34 @@ def _fix_url_as_label_links(text: str) -> str:
     return re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', _replace, text)
 
 
+
+def _remove_broken_link_sentences(text: str) -> str:
+    """
+    Xóa câu/dòng chứa link bị lỗi:
+    - Link text rõ ràng nhưng không có URL thực: [Tên](URL_thủ_tục_cụ_thể) hoặc [text]()
+    - Câu kết thúc bằng link text trần không có ngoặc URL: "...tại đây" không có hyperlink
+    - Câu cấu trúc: "tại đường dẫn ... 👉 [text](broken_url)" — dạng dẫn đến link lỗi
+    - Câu chứa placeholder URL dạng: URL_*, link_*, <url>, [url], ...
+    """
+    if not text:
+        return text
+
+    _BROKEN_LINK_PATTERNS = [
+        # Link markdown với URL placeholder hoặc rỗng
+        re.compile(r"\[([^\]]+)\]\(\s*(URL_[^)]*|<[^>]+>|\[.*?\]|https?://[^)]*placeholder[^)]*|)\s*\)", re.IGNORECASE),
+        # Câu chứa "👉 [text](url)" nhưng url là placeholder
+        re.compile(r"👉\s*\[([^\]]+)\]\(\s*(URL_[^)]*|https?://[^)\s]*\.\.\.)[^)]*\)", re.IGNORECASE),
+    ]
+
+    lines = text.splitlines()
+    result = []
+    for line in lines:
+        has_broken = any(p.search(line) for p in _BROKEN_LINK_PATTERNS)
+        if not has_broken:
+            result.append(line)
+        # else: bỏ qua dòng có link lỗi
+    return "\n".join(result)
+
 def _clean_response_text(text: str, citations: list[Citation] | None = None) -> str:
     cleaned = (text or "").strip()
     if not cleaned:
@@ -1228,6 +1299,7 @@ def _clean_response_text(text: str, citations: list[Citation] | None = None) -> 
     cleaned = _linkify_inline_doc_references(cleaned, citations or [])
     cleaned = _format_inline_references(cleaned, citations or [])
     cleaned = _strip_inline_source_links(cleaned)
+    cleaned = _remove_broken_link_sentences(cleaned)  # xóa câu có link placeholder/lỗi
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned
 
@@ -1261,7 +1333,40 @@ def _normalize_legal_answer_structure(text: str) -> str:
     return content
 
 
+def _is_ood_refusal(text: str) -> bool:
+    """
+    Phát hiện câu trả lời là lời từ chối câu hỏi ngoài phạm vi hành chính.
+    Dùng để bỏ citations và source lead khi LLM từ chối thay vì trả lời.
+    """
+    normalized = " ".join((text or "").lower().split())
+    _REFUSAL_MARKERS = (
+        "không thuộc phạm vi hỗ trợ",
+        "ngoài phạm vi hỗ trợ",
+        "không thuộc phạm vi",
+        "ngoài phạm vi",
+        "không thuộc các lĩnh vực hành chính",
+        "không thuộc lĩnh vực hành chính",
+        "không hỗ trợ câu hỏi",
+        "câu hỏi của bạn về thời tiết",
+        "câu hỏi của bạn về du lịch",
+        "câu hỏi của bạn về",  # + "không thuộc"
+    )
+    # Marker chung "câu hỏi của bạn về" chỉ tính là refusal nếu đi kèm "không thuộc"
+    if "câu hỏi của bạn về" in normalized and "không thuộc" in normalized:
+        return True
+    return any(marker in normalized for marker in _REFUSAL_MARKERS[:-1])
+
+
 def _ensure_rag_source_lead(text: str, citations: list[Citation]) -> str:
+    """
+    Chèn câu dẫn nhập tên tài liệu KHI VÀ CHỈ KHI tài liệu có hint lead được cấu hình sẵn
+    trong source_hints.py (đảm bảo tên tài liệu thực sự liên quan đến query).
+
+    KHÔNG chèn câu dẫn mặc định "Theo thông tin trong [tên tài liệu]..." nữa — vì:
+    - Tài liệu truy xuất được có thể không thực sự khớp câu hỏi (retriever lấy nhầm).
+    - Gemini đã được prompt không lặp tên tài liệu trong thân bài.
+    - Nếu câu trả lời đã có "Theo...", giữ nguyên không chèn thêm.
+    """
     if not text.strip():
         return text
     first_doc = next((citation for citation in citations if citation.source_type == "document"), None)
@@ -1270,15 +1375,15 @@ def _ensure_rag_source_lead(text: str, citations: list[Citation]) -> str:
 
     display_name = pretty_document_name(first_doc.document_name)
     hint = get_document_hint(display_name, {}) or {}
+    configured_lead = hint.get("lead")  # Chỉ dùng lead được cấu hình rõ ràng
+    if not configured_lead:
+        return text  # Không chèn lead mặc định — tránh nhắc tên tài liệu không liên quan
+
     lowered_head = text[:260].lower()
     if display_name.lower() in lowered_head or "theo thông tin trong" in lowered_head:
-        return text
+        return text  # Đã có dẫn nhập rồi
 
-    lead = str(
-        hint.get("lead")
-        or f"Theo thông tin trong tài liệu {display_name}, tôi trả lời câu hỏi của bạn như sau:"
-    ).strip()
-    return lead + "\n\n" + text.lstrip()
+    return str(configured_lead).strip() + "\n\n" + text.lstrip()
 
 
 _RAG_NO_ANSWER_MARKERS = (
@@ -1301,6 +1406,23 @@ _RAG_NO_ANSWER_MARKERS = (
     "không có thông tin nào về",
     "các tài liệu này tập trung vào",
     "tài liệu hiện có không chứa",
+    # Trường hợp Gemini mở đầu sai — lấy nhầm greeting/intro từ đầu tài liệu
+    "bạn muốn tìm hiểu thông tin gì về thủ tục hành chính",
+    "vui lòng cho tôi biết rõ hơn yêu cầu",
+    "để tôi có thể hỗ trợ bạn tốt nhất",
+    # Khi Gemini thấy tài liệu không liên quan và nói thẳng
+    "câu hỏi này không liên quan đến tài liệu",
+    "tài liệu không phù hợp với câu hỏi",
+    "ngữ cảnh được cung cấp không liên quan",
+    # Phrase Gemini dùng khi tài liệu RAG không chứa thông tin cần thiết
+    # nhưng KHÔNG khớp các marker cũ → fallback web không trigger (bug đã gặp)
+    "không thể được trả lời dựa trên",
+    "không thể trả lời dựa trên",
+    "không thể cung cấp thông tin dựa trên tài liệu",
+    "tài liệu hiện có không đủ thông tin",
+    "các tài liệu này chủ yếu liên quan đến",
+    "tài liệu này chủ yếu liên quan đến",
+    "các tài liệu hiện có chủ yếu",
 )
 
 
@@ -1615,6 +1737,30 @@ class ChatEngine:
                     )
                     rag_text = _clean_response_text(rag_text, rag_citations)
 
+                    # Kiểm tra nếu Gemini mở đầu câu trả lời bằng tên tài liệu không liên quan
+                    # (ví dụ: "Theo thông tin trong sổ tay thuế..." khi user hỏi về tạm trú)
+                    # → coi là RAG không trả lời được → fallback web
+                    _head = rag_text[:300].lower()
+                    _doc_names_in_head = [
+                        c.document_name.lower() for c in rag_citations
+                        if c.source_type == "document" and c.document_name.lower() in _head
+                    ]
+                    _query_tokens = set(w for w in re.split(r"\s+", query.lower()) if len(w) >= 3)
+                    _doc_tokens_in_query = any(
+                        any(tok in query.lower() for tok in doc_name.split())
+                        for doc_name in _doc_names_in_head
+                    ) if _doc_names_in_head else True  # nếu không có tên doc trong câu → không ảnh hưởng
+
+                    _answer_irrelevant = (
+                        "xin chào" in _head or
+                        ("chào bạn" in _head and len(rag_text) < 500 and not any(
+                            kw in _head for kw in ["thủ tục", "đăng ký", "hồ sơ", "lệ phí", "luật", "nghị định"]
+                        ))
+                    )
+                    if _answer_irrelevant:
+                        logger.info("RAG trả lời lệch chủ đề (greeting/irrelevant); fallback web. query=%s", query)
+                        rag_text = "[[RAG_NO_ANSWER]]"
+
                     # Lưu chunks vào cache nếu RAG thành công
                     if session_key and effective_chunks and not _should_fallback_to_web_after_rag(query, rag_text):
                         cache_chunks(session_key, effective_chunks)
@@ -1677,6 +1823,8 @@ class ChatEngine:
                                 )
                     else:
                         response_mode = AnswerMode.RAG
+                        # Chỉ giữ citations cho tài liệu thực sự được model trích dẫn
+                        rag_citations = _filter_rag_citations_by_usage(rag_text, rag_citations, [])
                         citations = _merge_citations(citations, rag_citations)
                         yield _sse(StreamEvent("mode", response_mode.value))
 
@@ -1729,7 +1877,13 @@ class ChatEngine:
             if is_legal_query(query) or is_procedure_query(query):
                 full_text = _normalize_legal_answer_structure(full_text)
 
-            if response_mode == AnswerMode.RAG and full_text and not is_greeting:
+            # Nếu LLM từ chối câu hỏi ngoài phạm vi → xóa citations + bỏ source lead
+            # (không hiển thị tài liệu nội bộ khi không dùng để trả lời)
+            _refusal = _is_ood_refusal(full_text)
+            if _refusal:
+                citations = []
+
+            if response_mode == AnswerMode.RAG and full_text and not is_greeting and not _refusal:
                 full_text = _ensure_rag_source_lead(full_text, citations)
 
             # Token chính xác: dùng Gemini usage_metadata nếu có, fallback ước lượng
@@ -1760,10 +1914,18 @@ class ChatEngine:
             await db.flush()
 
             from app.utils.data_crypto import mask_pii as _mask_pii
+            # Lưu câu hỏi sạch vào log — bỏ prefix "Chủ đề hiện tại: X. Câu hỏi: Y"
+            # để monitoring hiển thị đúng câu hỏi thực tế người dùng đặt
+            import re as _re
+            _topic_strip = _re.match(
+                r'^Chủ đề hiện tại:\s*[^.]+\.\s*Câu hỏi:\s*(.+)$',
+                query.strip(), _re.IGNORECASE | _re.DOTALL
+            )
+            _log_query = _topic_strip.group(1).strip() if _topic_strip else query
             usage = UsageLog(
                 conversation_id=conversation.id,
                 message_id=msg.id,
-                query_text=_mask_pii(query[:500]),
+                query_text=_mask_pii(_log_query[:500]),
                 answer_mode=answer_mode_value,
                 tokens_used=tokens_used,
                 latency_ms=latency_ms,
@@ -1818,6 +1980,24 @@ class ChatEngine:
                                         domain='dichvucong.gov.vn' if 'dichvucong.gov.vn' in _url else None,
                                     )])
                             yield _sse(StreamEvent("service_links", service_links_data))
+
+                        # ── Kiểm tra hiệu lực văn bản cho RAG path ──────────────
+                        # Chỉ chạy khi câu trả lời có tham chiếu pháp lý (tránh tốn quota
+                        # cho câu hỏi thông thường không có văn bản pháp luật nào).
+                        # Dùng cùng cơ chế enrich() như AI path — kết quả hiển thị ở
+                        # panel "Căn cứ pháp lý" + note hiệu lực trong Tham khảo thêm.
+                        _has_legal_refs = bool(_enricher._extract_references(
+                            full_text + "\n\n" + rag_context_text
+                        ))
+                        if _has_legal_refs:
+                            enrich = await _enricher.enrich(
+                                response_text=full_text,
+                                context_chunks_text=rag_context_text,
+                            )
+                            if enrich.legal_refs:
+                                yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
+                            if enrich.source_refs:
+                                yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
                     else:
                         service_links_data = _enricher.extract_service_links_sync(full_text)
                         if service_links_data:
@@ -1846,7 +2026,7 @@ class ChatEngine:
                 except Exception as _enrich_err:
                     logger.warning("Enrichment thất bại (bỏ qua): %s", _enrich_err)
 
-            if citations and not is_greeting and not assessment.get("should_refuse_precise"):
+            if citations and not is_greeting and not assessment.get("should_refuse_precise") and not _refusal:
                 yield _sse(StreamEvent("citations", [asdict(c) for c in citations]))
 
             # ── Done event gửi SAU enrichment nhưng latency_ms đo TRƯỚC enrichment ──
@@ -2022,6 +2202,11 @@ class ChatEngine:
                 "- Chỉ coi các URL trong ngữ cảnh web ở trên là nguồn tham khảo có thể hiển thị; không được tự bịa thêm link khác.\n"
                 "- Nếu dữ liệu web chưa đủ mới hoặc chưa chắc chắn, nói rõ giới hạn thay vì khẳng định chắc chắn.\n"
                 "- Với câu hỏi pháp lý hoặc lệ phí, phải đối chiếu đúng tên thủ tục trong câu hỏi trước khi kết luận mức tiền.\n"
+                "- Lệ phí thường có NHIỀU mức theo từng hình thức nộp (Trực tiếp / Trực tuyến). "
+                "Mỗi hình thức có thể có: theo danh sách, cá nhân/hộ gia đình, Miễn phí cho đối tượng đặc biệt. "
+                "PHẢI đọc và nêu ĐẦY ĐỦ tất cả mức theo từng hình thức — KHÔNG chỉ đọc mức 'Miễn phí' rồi kết luận miễn phí (Miễn phí chỉ dành đối tượng đặc biệt: người cao tuổi, trẻ em, hộ nghèo...). "
+                "Ví dụ đúng — Trực tuyến: 5.000đ/danh sách, 7.000đ/cá nhân-hộ gia đình, Miễn phí/đối tượng TT75. "
+                "Ví dụ đúng — Trực tiếp: 10.000đ/danh sách, 15.000đ/cá nhân-hộ gia đình, Miễn phí/đối tượng TT75.\n"
                 "- **TUYỆT ĐỐI KHÔNG** dùng `(trang X)` hay `([N], trang X)` cho nội dung từ web — định dạng đó chỉ dùng cho tài liệu nội bộ có số trang thực.\n"
                 "- Khi trích dẫn thông tin từ nguồn web, cuối câu dùng `([N])` trong đó N là số thứ tự nguồn web (bắt đầu từ 1 nếu không có tài liệu nội bộ, hoặc từ số tiếp theo sau tài liệu nội bộ). Ví dụ: câu trích từ nguồn web thứ nhất → `([1])`, nguồn web thứ hai → `([2])`. Các số này khớp với thứ tự trong panel Tham khảo thêm và có thể click được.\n"
                 "- Không dùng `(nguồn)` — dùng `([N])` thay thế.\n"

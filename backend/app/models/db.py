@@ -21,11 +21,11 @@ from app.config import settings
 # connect_args với ssl="require" + statement_timeout tránh connection treo.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    pool_size=15,
-    max_overflow=20,
+    pool_size=10,         
+    max_overflow=4,     
     pool_recycle=180,
     pool_pre_ping=True,
-    pool_timeout=60,
+    pool_timeout=60,      
     echo=settings.DEBUG,
     connect_args={
         "ssl": "require",

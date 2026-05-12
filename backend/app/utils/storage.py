@@ -1,14 +1,3 @@
-"""
-storage.py — Lớp trừu tượng hoá lưu trữ file.
-
-Khi AZURE_STORAGE_CONNECTION_STRING được cấu hình → dùng Azure Blob Storage.
-Khi không có → dùng local disk (UPLOAD_DIR) như cũ.
-
-Không thay đổi logic upload/ingest hiện tại; chỉ thay thế các lời gọi
-Path(...).write_bytes() / Path(...).read_bytes() / Path(...).exists() /
-Path(...).unlink() bằng các hàm trong module này.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -17,32 +6,27 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Lazy import Azure SDK (chỉ import khi thực sự cần) ──────────────────────
-_blob_service_client = None
+# ── Lazy import Boto3 SDK (chỉ import khi thực sự cần) ──────────────────────
+_s3_client = None
 
-
-def _get_blob_client(blob_name: str):
-    """Trả về BlobClient cho một blob cụ thể."""
+def _get_s3_client():
+    """Trả về S3 Client kết nối đến Cloudflare R2."""
     from app.config import settings
-    global _blob_service_client
+    global _s3_client
 
-    if _blob_service_client is None:
-        from azure.storage.blob import BlobServiceClient
-        _blob_service_client = BlobServiceClient.from_connection_string(
-            settings.AZURE_STORAGE_CONNECTION_STRING
+    if _s3_client is None:
+        import boto3
+        from botocore.config import Config
+
+        _s3_client = boto3.client(
+            's3',
+            endpoint_url=f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=settings.R2_ACCESS_KEY,
+            aws_secret_access_key=settings.R2_SECRET_KEY,
+            config=Config(signature_version='s3v4'),
+            region_name='auto'  # R2 tự động định tuyến
         )
-        # Tạo container nếu chưa tồn tại
-        try:
-            _blob_service_client.create_container(settings.AZURE_STORAGE_CONTAINER_NAME)
-            logger.info("Đã tạo Azure Blob container: %s", settings.AZURE_STORAGE_CONTAINER_NAME)
-        except Exception:
-            pass  # Container đã tồn tại — bỏ qua
-
-    from app.config import settings as _s
-    return _blob_service_client.get_blob_client(
-        container=_s.AZURE_STORAGE_CONTAINER_NAME,
-        blob=blob_name,
-    )
+    return _s3_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,17 +36,21 @@ def _get_blob_client(blob_name: str):
 def save_file(file_path: str | Path, content: bytes) -> None:
     """
     Lưu file:
-    - Azure Blob nếu USE_AZURE_STORAGE=True
+    - Cloudflare R2 nếu USE_R2_STORAGE=True
     - Local disk nếu không
-    file_path vẫn được dùng làm blob_name để giữ tương thích với logic cũ.
+    file_path vẫn được dùng làm object key để giữ tương thích.
     """
     from app.config import settings
 
-    if settings.USE_AZURE_STORAGE:
-        blob_name = _to_blob_name(file_path)
-        blob_client = _get_blob_client(blob_name)
-        blob_client.upload_blob(content, overwrite=True)
-        logger.debug("Đã upload lên Azure Blob: %s", blob_name)
+    if getattr(settings, 'USE_R2_STORAGE', False):
+        s3_key = _to_s3_key(file_path)
+        s3_client = _get_s3_client()
+        s3_client.put_object(
+            Bucket=settings.R2_BUCKET_NAME,
+            Key=s3_key,
+            Body=content
+        )
+        logger.debug("Đã upload lên Cloudflare R2: %s", s3_key)
     else:
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,13 +64,14 @@ def load_file(file_path: str | Path) -> Optional[bytes]:
     """
     from app.config import settings
 
-    if settings.USE_AZURE_STORAGE:
-        blob_name = _to_blob_name(file_path)
+    if getattr(settings, 'USE_R2_STORAGE', False):
+        s3_key = _to_s3_key(file_path)
+        s3_client = _get_s3_client()
         try:
-            blob_client = _get_blob_client(blob_name)
-            return blob_client.download_blob().readall()
+            response = s3_client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=s3_key)
+            return response['Body'].read()
         except Exception as e:
-            logger.warning("Không đọc được Azure Blob %s: %s", blob_name, e)
+            logger.warning("Không đọc được file từ R2 %s: %s", s3_key, e)
             return None
     else:
         path = Path(file_path)
@@ -95,12 +84,18 @@ def file_exists(file_path: str | Path) -> bool:
     """Kiểm tra file có tồn tại không."""
     from app.config import settings
 
-    if settings.USE_AZURE_STORAGE:
-        blob_name = _to_blob_name(file_path)
+    if getattr(settings, 'USE_R2_STORAGE', False):
+        import botocore
+        s3_key = _to_s3_key(file_path)
+        s3_client = _get_s3_client()
         try:
-            blob_client = _get_blob_client(blob_name)
-            blob_client.get_blob_properties()
+            s3_client.head_object(Bucket=settings.R2_BUCKET_NAME, Key=s3_key)
             return True
+        except botocore.exceptions.ClientError as e:
+            # Mã lỗi 404 nghĩa là file không tồn tại
+            if e.response['Error']['Code'] == "404":
+                return False
+            return False
         except Exception:
             return False
     else:
@@ -111,14 +106,14 @@ def delete_file(file_path: str | Path) -> None:
     """Xoá file. Không raise lỗi nếu file không tồn tại."""
     from app.config import settings
 
-    if settings.USE_AZURE_STORAGE:
-        blob_name = _to_blob_name(file_path)
+    if getattr(settings, 'USE_R2_STORAGE', False):
+        s3_key = _to_s3_key(file_path)
+        s3_client = _get_s3_client()
         try:
-            blob_client = _get_blob_client(blob_name)
-            blob_client.delete_blob()
-            logger.debug("Đã xoá Azure Blob: %s", blob_name)
+            s3_client.delete_object(Bucket=settings.R2_BUCKET_NAME, Key=s3_key)
+            logger.debug("Đã xoá file trên R2: %s", s3_key)
         except Exception as e:
-            logger.warning("Không xoá được Azure Blob %s: %s", blob_name, e)
+            logger.warning("Không xoá được file R2 %s: %s", s3_key, e)
     else:
         path = Path(file_path)
         if path.exists():
@@ -127,13 +122,13 @@ def delete_file(file_path: str | Path) -> None:
 
 def restore_to_local(file_path: str | Path) -> bool:
     """
-    Khi USE_AZURE_STORAGE=True: tải blob về disk tạm (UPLOAD_DIR) để ingestor
+    Khi USE_R2_STORAGE=True: tải file về disk tạm (UPLOAD_DIR) để ingestor
     đọc được qua đường dẫn thông thường. Trả về True nếu thành công.
-    Khi USE_AZURE_STORAGE=False: không cần làm gì — trả về file_exists().
+    Khi USE_R2_STORAGE=False: không cần làm gì — trả về file_exists().
     """
     from app.config import settings
 
-    if not settings.USE_AZURE_STORAGE:
+    if not getattr(settings, 'USE_R2_STORAGE', False):
         return Path(file_path).exists()
 
     content = load_file(file_path)
@@ -143,42 +138,47 @@ def restore_to_local(file_path: str | Path) -> bool:
     path = Path(file_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
-    logger.info("Đã khôi phục file từ Azure Blob về local: %s", file_path)
+    logger.info("Đã khôi phục file từ R2 về local: %s", file_path)
     return True
 
 
 def get_blob_url(file_path: str | Path) -> Optional[str]:
     """
-    Trả về URL công khai của blob (chỉ hữu ích nếu container được cấu hình public read).
-    Trong hệ thống này, chỉ dùng để debug — file luôn được serve qua API backend.
+    Trả về URL công khai của file.
+    Chỉ hoạt động nếu bucket R2 của bạn được cấu hình Custom Domain (Public).
     """
     from app.config import settings
 
-    if not settings.USE_AZURE_STORAGE:
+    if not getattr(settings, 'USE_R2_STORAGE', False):
         return None
 
-    blob_name = _to_blob_name(file_path)
-    return (
-        f"https://{settings.AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net"
-        f"/{settings.AZURE_STORAGE_CONTAINER_NAME}/{blob_name}"
-    )
+    s3_key = _to_s3_key(file_path)
+    public_domain = getattr(settings, 'R2_PUBLIC_DOMAIN', None)
+    
+    if public_domain:
+        return f"https://{public_domain}/{s3_key}"
+    
+    # URL nội bộ (thường không cấp quyền truy cập public trực tiếp từ link này)
+    return f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/{settings.R2_BUCKET_NAME}/{s3_key}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _to_blob_name(file_path: str | Path) -> str:
+def _to_s3_key(file_path: str | Path) -> str:
     """
-    Chuyển đường dẫn local thành blob name.
+    Chuyển đường dẫn local thành S3 key.
+    Đảm bảo dấu '/' đồng nhất cho dù đang chạy trên môi trường Windows hay Linux.
     Ví dụ: /tmp/uploads/abc123.pdf  →  uploads/abc123.pdf
-    Giữ đường dẫn tương đối để tránh conflict khi UPLOAD_DIR thay đổi.
     """
     from app.config import settings
 
-    path_str = str(file_path)
-    upload_dir = settings.UPLOAD_DIR.rstrip("/") + "/"
+    path_str = str(file_path).replace("\\", "/")
+    upload_dir = str(settings.UPLOAD_DIR).replace("\\", "/").rstrip("/") + "/"
+    
     if path_str.startswith(upload_dir):
         return "uploads/" + path_str[len(upload_dir):]
+    
     # Fallback: lấy tên file
     return "uploads/" + Path(file_path).name

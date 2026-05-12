@@ -33,5 +33,4 @@ rank_bm25==0.2.2
 
 Pillow==10.4.0
 
-# ── Azure Blob Storage (file upload khi deploy) ────────────────────────────
-azure-storage-blob==12.23.1
+pip install boto3

@@ -159,10 +159,10 @@ async def upload_document(
     # Commit 1: chỉ metadata — nhanh, tránh timeout khi file lớn
     await db.commit()
 
-    # Commit 2: lưu file_content vào DB làm backup — CHỈ khi không dùng Azure.
-    # Khi Azure đã bật, file đã an toàn trên Blob Storage, không cần nhồi thêm
+    # Commit 2: lưu file_content vào DB làm backup — CHỈ khi không dùng R2.
+    # Khi R2 đã bật, file đã an toàn trên Cloudflare R2, không cần nhồi thêm
     # vào PostgreSQL (tránh làm đầy DB với file nhị phân lớn).
-    if not settings.USE_AZURE_STORAGE:
+    if not getattr(settings, 'USE_R2_STORAGE', False):
         async def _save_content_bg(doc_id_: str, data: bytes) -> None:
             from app.models.db import AsyncSessionLocal as _Session
             try:

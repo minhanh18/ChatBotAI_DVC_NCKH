@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import fitz
+import gc
+import os
 from uuid import UUID
 
 from sqlalchemy import select
@@ -85,26 +88,79 @@ async def _ingest_document_inner(document_id: str) -> None:
         logger.info("Bắt đầu index document: %s (%s)", doc_name, document_id)
     # DB connection được giải phóng tại đây — trước khi extract + embed
 
-    # ── Bước 2: Extract + chunk + embed (KHÔNG giữ DB connection) ────────────
+    # ── Bước 2: Extract + chunk + embed (TỐI ƯU HÓA RAM BẰNG STREAMING) ──────
     try:
-        loop = asyncio.get_event_loop()
-        raw_text = await loop.run_in_executor(None, extract_text, file_path)
-        if not raw_text.strip():
-            raise ValueError("File không có nội dung văn bản")
-
-        chunks = chunker.split(raw_text)
-        logger.info("  → %d chunks từ %d ký tự", len(chunks), len(raw_text))
-
-        deduped_chunks = []
+        ext = os.path.splitext(file_path)[1].lower()
+        chunks = []
         seen_chunk_hashes: set[str] = set()
-        for chunk in chunks:
-            content_hash = (chunk.meta or {}).get("content_hash")
-            if content_hash and content_hash in seen_chunk_hashes:
-                continue
-            if content_hash:
-                seen_chunk_hashes.add(content_hash)
-            deduped_chunks.append(chunk)
-        chunks = deduped_chunks
+        raw_text_parts = []
+        
+        # 1. CHIẾN THUẬT "CHIA ĐỂ TRỊ" DÀNH RIÊNG CHO FILE PDF
+        if ext == ".pdf":
+            logger.info("Dùng PyMuPDF bóc tách từng trang để tiết kiệm RAM...")
+            doc_fitz = fitz.open(file_path)
+            total_pages = len(doc_fitz)
+            position_counter = 0
+
+            for page_num in range(total_pages):
+                page = doc_fitz.load_page(page_num)
+                page_text = page.get_text("text")
+
+                if page_text.strip():
+                    raw_text_parts.append(page_text)
+                    
+                    # Băm nhỏ nội dung của CHỈ 1 trang này
+                    page_chunks = chunker.split(page_text)
+
+                    for chunk in page_chunks:
+                        # Cập nhật số thứ tự liên tục để DB không bị lỗi position
+                        chunk.position = position_counter
+                        position_counter += 1
+
+                        # Cập nhật metadata số trang cho chunk
+                        if not chunk.meta:
+                            chunk.meta = {}
+                        chunk.meta["page_start"] = page_num + 1
+                        chunk.meta["page_end"] = page_num + 1
+
+                        # Xóa trùng lặp (Dedup)
+                        content_hash = chunk.meta.get("content_hash")
+                        if content_hash:
+                            if content_hash in seen_chunk_hashes:
+                                continue
+                            seen_chunk_hashes.add(content_hash)
+
+                        chunks.append(chunk)
+
+                # CHỐT CHẶN BẢO VỆ RAM: Dọn rác ngay lập tức sau mỗi trang
+                del page_text
+                page = None
+                gc.collect()
+
+            doc_fitz.close()
+            raw_text = "\n\n".join(raw_text_parts) # Gom text lại để lát detect_legal_document_metadata
+
+        # 2. FALLBACK: DÀNH CHO CÁC FILE KHÁC (TXT, DOCX, CSV...)
+        else:
+            loop = asyncio.get_event_loop()
+            raw_text = await loop.run_in_executor(None, extract_text, file_path)
+            if not raw_text.strip():
+                raise ValueError("File không có nội dung văn bản")
+
+            raw_chunks = chunker.split(raw_text)
+            for chunk in raw_chunks:
+                content_hash = (chunk.meta or {}).get("content_hash")
+                if content_hash:
+                    if content_hash in seen_chunk_hashes:
+                        continue
+                    seen_chunk_hashes.add(content_hash)
+                chunks.append(chunk)
+
+        # 3. CHUẨN BỊ GỌI GEMINI EMBEDDING
+        if not chunks:
+             raise ValueError("Không trích xuất được chunk văn bản nào từ file")
+
+        logger.info("  → Trích xuất %d chunks từ %d ký tự", len(chunks), len(raw_text))
 
         texts = [c.content for c in chunks]
         embeddings = await embedding_service.embed_texts(texts)

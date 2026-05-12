@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.router import AnswerMode, RouteDecision, agent_router
 from app.rag.query_rewriter import rewrite_query
 from app.chat.engine import chat_engine
-from app.chat.evaluator import is_greeting_query, is_out_of_domain, out_of_domain_reply
+from app.chat.evaluator import is_greeting_query, is_chitchat_query, is_out_of_domain, out_of_domain_reply
 from app.config import settings
 from app.models.db import Conversation, Message, MessageFeedback, UsageLog, get_db, now_utc
 
@@ -95,9 +95,54 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(_greeting_reply) // 4), 'latency_ms': 0}})}\n\n"
         return _streaming_response(_greeting_stream)
 
+    # Shortcut: chitchat (cảm ơn, bye, ok...) → trả lời ngay, không RAG, không web search
+    if is_chitchat_query(_normalized_query):
+        _chitchat_reply = _get_chitchat_reply(_normalized_query)
+        async def _chitchat_stream():
+            yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
+            yield f"data: {json.dumps({'type': 'mode', 'data': 'ai'})}\n\n"
+            for part in _split_static_stream_text(_chitchat_reply):
+                yield f"data: {json.dumps({'type': 'token', 'data': part})}\n\n"
+            from app.utils.data_crypto import mask_pii as _mask_pii
+            assistant_msg = Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content=_chitchat_reply,
+                answer_mode="ai",
+                citations=[],
+                tokens_used=max(1, len(_chitchat_reply) // 4),
+                latency_ms=0,
+            )
+            conversation.updated_at = datetime.utcnow()
+            db.add(assistant_msg)
+            await db.flush()
+            db.add(UsageLog(
+                conversation_id=conversation.id,
+                message_id=assistant_msg.id,
+                query_text=_mask_pii(req.query[:500]),
+                answer_mode="ai",
+                tokens_used=max(1, len(_chitchat_reply) // 4),
+                latency_ms=0,
+                is_rag=False,
+                retrieved_chunks=0,
+            ))
+            await db.commit()
+            yield f"data: {json.dumps({'type': 'done', 'data': {'tokens': max(1, len(_chitchat_reply) // 4), 'latency_ms': 0}})}\n\n"
+        return _streaming_response(_chitchat_stream)
+
     # Từ chối ngay nếu câu hỏi rõ ràng ngoài lĩnh vực hành chính/pháp lý
     # Từ chối ngay nếu câu hỏi rõ ràng ngoài lĩnh vực hành chính/pháp lý (check trên query đã chuẩn)
-    if is_out_of_domain(_normalized_query) and not is_greeting_query(_normalized_query):
+    # QUAN TRỌNG: _normalized_query có thể đã được _resolve_effective_query bổ sung prefix
+    # "Chủ đề hiện tại: đăng ký tạm trú. Câu hỏi: thời tiết hôm nay"
+    # → is_out_of_domain sẽ thấy "đăng ký" trong _ADMIN_OVERRIDE và bỏ qua OOD check → sai.
+    # Fix: khi có prefix "Chủ đề hiện tại: X. Câu hỏi: Y", chỉ check phần Y (câu hỏi thực).
+    _ood_check_re = re.compile(
+        r'^Chủ đề hiện tại:\s*[^.]+\.\s*Câu hỏi:\s*(.+)$',
+        re.IGNORECASE | re.DOTALL,
+    )
+    _ood_match = _ood_check_re.match(_normalized_query.strip())
+    _query_for_ood = _ood_match.group(1).strip() if _ood_match else _normalized_query
+    if is_out_of_domain(_query_for_ood) and not is_greeting_query(_query_for_ood):
         ood_text = out_of_domain_reply()
         async def _ood_stream():
             yield f"data: {json.dumps({'type': 'conversation_id', 'data': str(conversation.id)})}\n\n"
@@ -594,6 +639,21 @@ async def _latest_assistant_feedback_is_dislike(db: AsyncSession, conversation_i
     )
     latest_feedback = (await db.execute(feedback_stmt)).scalars().first()
     return bool(latest_feedback and latest_feedback.rating == "dislike")
+
+
+def _get_chitchat_reply(query: str) -> str:
+    """Trả lời nhanh cho câu chitchat — không cần LLM hay RAG."""
+    q = (query or "").strip().lower()
+    if any(w in q for w in ["cảm ơn", "cám ơn", "thanks", "thank you"]):
+        return "Không có gì! Nếu bạn cần hỗ trợ thêm về thủ tục hành chính, cứ hỏi mình nhé 😊"
+    if any(w in q for w in ["tạm biệt", "bye", "goodbye", "gặp lại"]):
+        return "Tạm biệt! Chúc bạn thực hiện thủ tục suôn sẻ. Hẹn gặp lại 👋"
+    if any(w in q for w in ["ok", "oke", "okay", "được rồi", "hiểu rồi", "rõ rồi", "vâng", "dạ"]):
+        return "Vâng! Bạn cần hỗ trợ thêm điều gì không?"
+    if any(w in q for w in ["tuyệt", "hay đó", "tốt lắm", "ngon", "đỉnh", "hữu ích"]):
+        return "Cảm ơn bạn! Nếu còn câu hỏi nào về thủ tục hành chính, mình luôn sẵn sàng hỗ trợ 😊"
+    # Mặc định
+    return "Bạn có câu hỏi nào về thủ tục hành chính hoặc dịch vụ công không? Mình sẵn sàng giúp!"
 
 
 async def _should_auto_force_web(db: AsyncSession, conversation_id: UUID, query: str) -> bool:

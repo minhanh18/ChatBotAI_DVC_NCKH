@@ -522,6 +522,54 @@ def _build_rag_context(chunks: list[RetrievedChunk]) -> tuple[str, list[Citation
     return context, citations
 
 
+def _filter_rag_citations_by_usage(
+    rag_text: str,
+    citations: list[Citation],
+    doc_order: list[str],
+) -> list[Citation]:
+    """
+    Chỉ giữ lại citation của tài liệu mà Gemini thực sự đề cập trong câu trả lời.
+
+    Gemini nhận context [Tài liệu 1], [Tài liệu 2]... nhưng có thể chỉ dùng
+    [Tài liệu 1]. Nếu không có dấu hiệu đề cập đến [Tài liệu N] trong rag_text
+    → bỏ citation của tài liệu đó để panel không hiển thị nguồn không liên quan.
+
+    Dấu hiệu đề cập hợp lệ:
+      - Inline cite: ([2]), ([2], trang X), (trang X) khi chỉ có 1 doc
+      - Gemini viết tên tài liệu trong thân bài (hiếm, nhưng vẫn check)
+    """
+    if not citations or not rag_text:
+        return citations
+    if len(citations) == 1:
+        return citations  # chỉ 1 doc → không cần lọc
+
+    import re as _re
+    text_lower = rag_text.lower()
+    kept: list[Citation] = []
+
+    for idx, citation in enumerate(citations, start=1):
+        doc_name_lower = (citation.document_name or "").strip().lower()
+        # Dấu hiệu 1: inline ([N]) hoặc ([N], trang X)
+        cited_inline = bool(
+            _re.search(rf'\(\s*\[{idx}\]', rag_text)
+        )
+        # Dấu hiệu 2: tên tài liệu xuất hiện trong text (Gemini đôi khi ghi tên)
+        cited_by_name = bool(doc_name_lower and len(doc_name_lower) > 4 and doc_name_lower in text_lower)
+        # Dấu hiệu 3: nếu chỉ còn 1 doc sau filter và text có (trang X) → coi là dùng
+        # (xử lý ở cuối sau khi loop)
+
+        if cited_inline or cited_by_name:
+            kept.append(citation)
+
+    # Edge case: Gemini không viết citation rõ ràng nhưng text có nội dung thực
+    # (rag_text dài, không phải fallback) → giữ lại doc đầu tiên (highest-score)
+    # vì _build_rag_context đã sắp xếp theo score giảm dần
+    if not kept and len(rag_text.strip()) > 100:
+        kept = [citations[0]]
+
+    return kept if kept else citations  # fallback an toàn: giữ tất cả
+
+
 def _merge_citations(existing: list[Citation], incoming: list[Citation]) -> list[Citation]:
     merged: list[Citation] = []
     seen: set[str] = set()
@@ -1311,10 +1359,16 @@ def _is_ood_refusal(text: str) -> bool:
         "không hỗ trợ câu hỏi",
         "câu hỏi của bạn về thời tiết",
         "câu hỏi của bạn về du lịch",
-        "câu hỏi của bạn về",  # + "không thuộc"
+        "câu hỏi này nằm ngoài lĩnh vực",
+        "không thuộc lĩnh vực mình hỗ trợ",
+        "mình chỉ hỗ trợ các câu hỏi về thủ tục hành chính",
+        "tôi chỉ hỗ trợ các câu hỏi về thủ tục hành chính",
+        "câu hỏi này không thuộc",
+        "câu hỏi của bạn về",  # + "không thuộc" — marker tổng quát (check riêng bên dưới)
     )
-    # Marker chung "câu hỏi của bạn về" chỉ tính là refusal nếu đi kèm "không thuộc"
-    if "câu hỏi của bạn về" in normalized and "không thuộc" in normalized:
+    # Marker tổng quát "câu hỏi của bạn về" chỉ tính là refusal nếu đi kèm từ từ chối
+    _refusal_context_words = ("không thuộc", "ngoài phạm vi", "không hỗ trợ", "không thể hỗ trợ")
+    if "câu hỏi của bạn về" in normalized and any(w in normalized for w in _refusal_context_words):
         return True
     return any(marker in normalized for marker in _REFUSAL_MARKERS[:-1])
 
@@ -1785,6 +1839,8 @@ class ChatEngine:
                                 )
                     else:
                         response_mode = AnswerMode.RAG
+                        # Chỉ giữ citations của tài liệu Gemini thực sự đề cập
+                        rag_citations = _filter_rag_citations_by_usage(rag_text, rag_citations, [])
                         citations = _merge_citations(citations, rag_citations)
                         yield _sse(StreamEvent("mode", response_mode.value))
 
@@ -1842,6 +1898,39 @@ class ChatEngine:
             _refusal = _is_ood_refusal(full_text)
             if _refusal:
                 citations = []
+                # Ghi đè citations trung gian đã emit trong _stream_ai (web/doc)
+                # bằng event rỗng để frontend không hiển thị nguồn tham khảo khi từ chối
+                yield _sse(StreamEvent("citations", []))
+            else:
+                # Lọc doc citations không thực sự được dùng trong câu trả lời cuối:
+                # Nếu final text có cả web context (web citation) và tài liệu nội bộ nhưng
+                # text không chứa bất kỳ tham chiếu trang nào đến tài liệu đó → bỏ doc citation đó
+                # để tránh trường hợp "1 tài liệu nhưng panel hiển thị 2 nguồn không liên quan".
+                _doc_cits = [c for c in citations if c.source_type == "document"]
+                _web_cits = [c for c in citations if c.source_type != "document"]
+                if _doc_cits and _web_cits:
+                    # Kiểm tra xem doc citation có được refer trong full_text không
+                    # (qua page number, tên tài liệu, hoặc inline ([N]) reference)
+                    _ft_lower = full_text.lower()
+                    _used_doc_cits = []
+                    for _dc in _doc_cits:
+                        _dname = (_dc.document_name or "").strip().lower()
+                        _page = str(_dc.page_number) if _dc.page_number else ""
+                        # Doc citation được coi là "dùng" nếu: tên doc xuất hiện trong text,
+                        # hoặc có page reference, hoặc response_mode là RAG/ai_rag
+                        _referenced = (
+                            (_dname and _dname in _ft_lower)
+                            or (_page and f"trang {_page}" in _ft_lower)
+                            or response_mode == AnswerMode.RAG
+                        )
+                        if _referenced:
+                            _used_doc_cits.append(_dc)
+                    if len(_used_doc_cits) < len(_doc_cits):
+                        logger.info(
+                            "Filtered %d unused doc citations (kept %d, web=%d)",
+                            len(_doc_cits) - len(_used_doc_cits), len(_used_doc_cits), len(_web_cits),
+                        )
+                    citations = _used_doc_cits + _web_cits
 
             if response_mode == AnswerMode.RAG and full_text and not is_greeting and not _refusal:
                 full_text = _ensure_rag_source_lead(full_text, citations)
@@ -1912,87 +2001,43 @@ class ChatEngine:
                     )
                 )
 
-            # ── Legal enrichment: trích link DVC + căn cứ pháp lý ──────────
-            if not is_greeting and response_mode in (AnswerMode.RAG, AnswerMode.AI):
-                try:
-                    from app.chat.legal_enricher import legal_enricher as _enricher
-                    from dataclasses import asdict as _asdict
-
-                    rag_context_text = (
-                        "\n\n".join(c.content for c in (decision.chunks or []))
-                    )
-
-                    if response_mode == AnswerMode.RAG:
-                        service_links_data = _enricher.extract_service_links_sync(
-                            full_text + "\n\n" + rag_context_text
-                        )
-                        if service_links_data:
-                            for _link in service_links_data:
-                                _url = (_link.get('url') or '').strip()
-                                if _url:
-                                    citations = _merge_citations(citations, [Citation(
-                                        document_name=_link.get('title') or _link.get('label') or 'Đường link dịch vụ công',
-                                        content='Đường link thao tác/hồ sơ được trích từ tài liệu hoặc nguồn kiểm chứng.',
-                                        score=0.95,
-                                        segment_id=_url,
-                                        url=_url,
-                                        source_type='web',
-                                        domain='dichvucong.gov.vn' if 'dichvucong.gov.vn' in _url else None,
-                                    )])
-                            yield _sse(StreamEvent("service_links", service_links_data))
-
-                        # ── Kiểm tra hiệu lực văn bản cho RAG path ──────────────
-                        # Chỉ chạy khi câu trả lời có tham chiếu pháp lý (tránh tốn quota
-                        # cho câu hỏi thông thường không có văn bản pháp luật nào).
-                        # Dùng cùng cơ chế enrich() như AI path — kết quả hiển thị ở
-                        # panel "Căn cứ pháp lý" + note hiệu lực trong Tham khảo thêm.
-                        _has_legal_refs = bool(_enricher._extract_references(
-                            full_text + "\n\n" + rag_context_text
-                        ))
-                        if _has_legal_refs:
-                            enrich = await _enricher.enrich(
-                                response_text=full_text,
-                                context_chunks_text=rag_context_text,
-                            )
-                            if enrich.legal_refs:
-                                yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
-                            if enrich.source_refs:
-                                yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
-                    else:
-                        service_links_data = _enricher.extract_service_links_sync(full_text)
-                        if service_links_data:
-                            for _link in service_links_data:
-                                _url = (_link.get('url') or '').strip()
-                                if _url:
-                                    citations = _merge_citations(citations, [Citation(
-                                        document_name=_link.get('title') or _link.get('label') or 'Đường link dịch vụ công',
-                                        content='Đường link thao tác/hồ sơ được trích từ tài liệu hoặc nguồn kiểm chứng.',
-                                        score=0.95,
-                                        segment_id=_url,
-                                        url=_url,
-                                        source_type='web',
-                                        domain='dichvucong.gov.vn' if 'dichvucong.gov.vn' in _url else None,
-                                    )])
-                            yield _sse(StreamEvent("service_links", service_links_data))
-
-                        enrich = await _enricher.enrich(
-                            response_text=full_text,
-                            context_chunks_text="",
-                        )
-                        if enrich.legal_refs:
-                            yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
-                        if enrich.source_refs:
-                            yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
-                except Exception as _enrich_err:
-                    logger.warning("Enrichment thất bại (bỏ qua): %s", _enrich_err)
-
+            # ── Citations emit (trước done) ──────────────────────────────
             if citations and not is_greeting and not assessment.get("should_refuse_precise") and not _refusal:
                 yield _sse(StreamEvent("citations", [asdict(c) for c in citations]))
 
-            # ── Done event gửi SAU enrichment nhưng latency_ms đo TRƯỚC enrichment ──
-            # Điều này đảm bảo latency_ms = thời gian thực tế client chờ nhận done
+            # ── Service links sync (nhanh, không tốn API) — emit trước done ──
+            # extract_service_links_sync chỉ parse regex, không gọi LLM → an toàn emit trước done.
+            _service_links_to_emit: list = []
+            if not is_greeting and response_mode in (AnswerMode.RAG, AnswerMode.AI) and not _refusal:
+                try:
+                    from app.chat.legal_enricher import legal_enricher as _enricher_sl
+                    _rag_ctx_sl = "\n\n".join(c.content for c in (decision.chunks or []))
+                    _sl_source = (full_text + "\n\n" + _rag_ctx_sl) if response_mode == AnswerMode.RAG else full_text
+                    _service_links_to_emit = _enricher_sl.extract_service_links_sync(_sl_source) or []
+                    if _service_links_to_emit:
+                        # Bổ sung service link vào citations nếu có URL mới
+                        for _link in _service_links_to_emit:
+                            _url = (_link.get('url') or '').strip()
+                            if _url:
+                                citations = _merge_citations(citations, [Citation(
+                                    document_name=_link.get('title') or _link.get('label') or 'Đường link dịch vụ công',
+                                    content='Đường link thao tác/hồ sơ được trích từ tài liệu hoặc nguồn kiểm chứng.',
+                                    score=0.95,
+                                    segment_id=_url,
+                                    url=_url,
+                                    source_type='web',
+                                    domain='dichvucong.gov.vn' if 'dichvucong.gov.vn' in _url else None,
+                                )])
+                        yield _sse(StreamEvent("service_links", _service_links_to_emit))
+                except Exception as _sl_err:
+                    logger.warning("Service links extract thất bại (bỏ qua): %s", _sl_err)
+
+            # ── Done event gửi NGAY — không chờ enrichment LLM ──────────────
+            # legal_enricher.enrich() gọi Gemini (LLM call #2) và có thể mất 5-15s.
+            # Client nhận "done" → loadMessages → render ngay lập tức.
+            # legal_refs / source_refs sẽ được gửi SAU done dưới dạng bonus events
+            # nếu frontend hỗ trợ xử lý sau done (hoặc bỏ qua nếu stream đã đóng).
             latency_ms = int((time.time() - start_ms) * 1000)
-            # Cập nhật lại latency trong DB cho chính xác
             try:
                 msg.latency_ms = latency_ms
                 usage.latency_ms = latency_ms
@@ -2006,6 +2051,33 @@ class ChatEngine:
                     {"tokens": tokens_used, "latency_ms": latency_ms},
                 )
             )
+
+            # ── Legal enrichment: chạy SAU done — không blocking client ─────
+            # enrich() gọi Gemini để kiểm tra hiệu lực văn bản pháp lý.
+            # Chạy sau done để client không phải chờ. Frontend có thể ignore các
+            # event legal_refs/source_refs đến sau done nếu stream đã đóng.
+            if not is_greeting and response_mode in (AnswerMode.RAG, AnswerMode.AI) and not _refusal:
+                try:
+                    from app.chat.legal_enricher import legal_enricher as _enricher
+                    from dataclasses import asdict as _asdict
+
+                    rag_context_text = (
+                        "\n\n".join(c.content for c in (decision.chunks or []))
+                    )
+                    _has_legal_refs = bool(_enricher._extract_references(
+                        full_text + "\n\n" + rag_context_text
+                    ))
+                    if _has_legal_refs:
+                        enrich = await _enricher.enrich(
+                            response_text=full_text,
+                            context_chunks_text=rag_context_text if response_mode == AnswerMode.RAG else "",
+                        )
+                        if enrich.legal_refs:
+                            yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
+                        if enrich.source_refs:
+                            yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
+                except Exception as _enrich_err:
+                    logger.warning("Enrichment thất bại (bỏ qua): %s", _enrich_err)
 
         except Exception as e:
             logger.exception("Chat engine error: %s", e)

@@ -520,17 +520,24 @@ export function ChatWindow({
             setStream((s) => ({ ...s, serviceLinks: links }));
           },
           onDone: async () => {
+            // Thứ tự ĐÚNG để tránh scroll giật 3 lần:
+            // 1. Set flag TRƯỚC loadMessages để loadMessages không auto-scroll xuống bottom
+            // 2. Fetch messages (setMessages bên trong)
+            // 3. Clear stream — React batch render messages + clear cùng 1 lượt
+            // 4. loadConversations async không blocking
+            pendingAssistantTopRef.current = true;   // phải set trước loadMessages
+            autoScrolledForCurrentReplyRef.current = false;
+            if (resolvedConvId) {
+              await loadMessages(resolvedConvId);
+            }
+            // Clear stream SAU khi messages đã có trong state — tránh flash UI trống
             setStream(STREAM_IDLE);
             setStreamPhase('idle');
             setPendingUserText('');
             setPendingUserTime(null);
             setVoiceStatus('');
-            pendingAssistantTopRef.current = true;
-            autoScrolledForCurrentReplyRef.current = false;
-            if (resolvedConvId) {
-              await loadMessages(resolvedConvId);
-            }
-            await loadConversations();
+            // loadConversations cập nhật sidebar, không cần await
+            loadConversations().catch(() => {});
           },
           onError: (err: string) => {
             const normalized = (err || '').toLowerCase();

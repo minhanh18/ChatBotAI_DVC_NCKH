@@ -34,3 +34,5 @@ rank_bm25==0.2.2
 Pillow==10.4.0
 
 boto3
+
+PyMuPDF

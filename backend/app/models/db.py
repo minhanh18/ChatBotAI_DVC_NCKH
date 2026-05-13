@@ -27,10 +27,11 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_timeout=30,      
     echo=settings.DEBUG,
+    # DI CHUYỂN RA ĐÂY:
+    prepared_statement_cache_size=0, 
+    # connect_args chỉ giữ lại các tham số truyền trực tiếp cho driver asyncpg
     connect_args={
         "ssl": "require",
-        "prepared_statement_cache_size": 0,
-        "statement_cache_size": 0, 
         "server_settings": {
             "statement_timeout": "30000",
             "idle_in_transaction_session_timeout": "60000",

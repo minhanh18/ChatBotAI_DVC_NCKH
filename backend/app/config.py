@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Model nhẹ — tiền xử lý: phân tích ý định, đọc log ngữ cảnh, tóm tắt session
     # Tốc độ tối đa, thinking_budget thấp (Minimal/Low)
-    GEMINI_LITE_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_LITE_MODEL: str = "gemini-2.5-flash"
 
     GEMINI_TEMPERATURE: float = 0.3
     GEMINI_MAX_OUTPUT_TOKENS: int = 4096

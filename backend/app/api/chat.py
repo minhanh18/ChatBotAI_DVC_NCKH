@@ -54,11 +54,18 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
     user_msg = await _save_user_message(db, conversation, req.query)
     history = await _load_history(db, conversation.id, exclude_message_id=user_msg.id)
 
-    # ── Chuẩn hóa query SỚM: không dấu/viết tắt/sai chính tả → tiếng Việt chuẩn.
-    # Phải chạy TRƯỚC greeting/OOD/clarification check vì các check đó dùng regex tiếng Việt.
-    # Ví dụ: "toi muon dk tam tru" → "Tôi muốn đăng ký tạm trú" trước khi check.
-    # Fail-safe: nếu rewrite lỗi/timeout thì giữ query gốc.
-    _normalized_query = await rewrite_query(req.query)
+    # ── Shortcut TRƯỚC rewrite: kiểm tra greeting/chitchat trên query gốc TRƯỚC khi gọi LLM.
+    # Lý do: rewrite_query() gọi Gemini Lite (timeout 2.5s) — lãng phí hoàn toàn cho "cảm ơn", "xin chào".
+    # is_greeting_query / is_chitchat_query dùng regex đơn giản, không cần query đã chuẩn hóa dấu.
+    _raw_query = req.query.strip()
+    if is_greeting_query(_raw_query) or is_chitchat_query(_raw_query):
+        _normalized_query = _raw_query  # skip rewrite hoàn toàn
+    else:
+        # ── Chuẩn hóa query: không dấu/viết tắt/sai chính tả → tiếng Việt chuẩn.
+        # Chạy TRƯỚC OOD/clarification check vì các check đó dùng regex tiếng Việt.
+        # Ví dụ: "toi muon dk tam tru" → "Tôi muốn đăng ký tạm trú" trước khi check.
+        # Fail-safe: nếu rewrite lỗi/timeout thì giữ query gốc.
+        _normalized_query = await rewrite_query(_raw_query)
 
     # Shortcut: câu chào hỏi → trả lời ngay, không RAG, không web search
     if is_greeting_query(_normalized_query):

@@ -1776,12 +1776,20 @@ class ChatEngine:
                                 effective_chunks = list(effective_chunks or []) + extra
                                 logger.info("Session cache HIT — appended %d cached chunks (total=%d)", len(extra), len(effective_chunks))
 
-                    rag_text, rag_citations, rag_usage = await self._generate_rag_answer(
-                        query=query,
-                        chunks=effective_chunks,
-                        history=history,
-                        session_summary=get_session_summary(session_key) if session_key else None,
-                    )
+                    # Nếu không có chunk nào (fresh + cached đều rỗng) → skip _generate_rag_answer.
+                    # Gọi Gemini với context rỗng chắc chắn trả về [[RAG_NO_ANSWER]],
+                    # vừa tốn ~2–3s LLM call vô ích vừa tốn token.
+                    if not effective_chunks:
+                        logger.info("Skip RAG generate — no chunks available, going straight to web fallback")
+                        rag_text = "[[RAG_NO_ANSWER]]"
+                        rag_citations, rag_usage = [], {}
+                    else:
+                        rag_text, rag_citations, rag_usage = await self._generate_rag_answer(
+                            query=query,
+                            chunks=effective_chunks,
+                            history=history,
+                            session_summary=get_session_summary(session_key) if session_key else None,
+                        )
                     rag_text = _clean_response_text(rag_text, rag_citations)
 
                     # Kiểm tra nếu Gemini mở đầu câu trả lời bằng tên tài liệu không liên quan
@@ -1808,8 +1816,11 @@ class ChatEngine:
                         logger.info("RAG trả lời lệch chủ đề (greeting/irrelevant); fallback web. query=%s", query)
                         rag_text = "[[RAG_NO_ANSWER]]"
 
-                    # Lưu chunks vào cache nếu RAG thành công
-                    if session_key and effective_chunks and not _should_fallback_to_web_after_rag(query, rag_text):
+                    # Lưu chunks vào cache BẤT KỂ RAG có trả lời đủ hay không.
+                    # Trước đây chỉ cache khi RAG thành công → với domain thủ tục hành chính
+                    # RAG gần như luôn fallback web → cache mãi rỗng → follow-up luôn retrieve lại từ đầu.
+                    # Chunks đã retrieve là hợp lệ, follow-up nên tái dùng để tiết kiệm latency.
+                    if session_key and effective_chunks:
                         cache_chunks(session_key, effective_chunks)
 
                     if _should_fallback_to_web_after_rag(query, rag_text):

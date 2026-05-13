@@ -11,7 +11,7 @@ Xử lý:
 Cơ chế 2 lớp:
 1. Offline: expand viết tắt bằng dictionary → nhanh, không cần API.
 2. LLM (Gemini): dùng GEMINI_MODEL từ settings (mặc định gemini-2.5-flash) để restore dấu + sửa chính tả.
-   - Timeout 5s (dùng Lite model nên nhanh hơn nhiều so với Flash).
+   - Timeout 2.5s (Lite model rất nhanh, 5s là quá dư).
    - KHÔNG import _key_pool từ engine (tránh circular import + deadlock).
    - Dùng GEMINI_API_KEY trực tiếp từ settings, không xoay vòng key.
    - Cache kết quả in-process (512 entries).
@@ -88,7 +88,9 @@ Câu cần chuẩn hóa (chỉ trả về câu đã chuẩn, không thêm gì):
 
 # Regex phát hiện query cần rewrite
 _NEEDS_REWRITE_PATTERNS = [
-    re.compile(r"\b(muon|lam|nhu|the nao|lam sao|o dau|bao nhieu|can|duoc|khong|co the|phai|nop|xin|cap|chuyen)\b", re.IGNORECASE),
+    # "xin" và "can" bị bỏ: là từ tiếng Việt hợp lệ (xin chào, cần gì...), không phải thiếu dấu.
+    # Giữ lại các từ thực sự là "không dấu" như muon, lam, o dau, bao nhieu, khong, phai, nop...
+    re.compile(r"\b(muon|lam|nhu|the nao|lam sao|o dau|bao nhieu|duoc|khong|co the|phai|nop|cap|chuyen)\b", re.IGNORECASE),
     re.compile(r"\b(tam tru|thuong tru|cu tru|dang ky|ho so|thu tuc|giay to|khai sinh|ket hon|nha dat|dat dai)\b", re.IGNORECASE),
     re.compile(r"\b(dk|bhyt|bhxh|cccd|cmnd|tthc|dvc|ubnd|hkd|gplx|hkk|gt|hs|tt|qd|nd)\b", re.IGNORECASE),
 ]
@@ -143,7 +145,7 @@ async def rewrite_query(query: str) -> str:
 
     Pipeline:
     1. Expand viết tắt offline (instantaneous, no API).
-    2. Nếu vẫn cần rewrite → gọi Gemini Lite với timeout 5s.
+    2. Nếu vẫn cần rewrite → gọi Gemini Lite với timeout 2.5s.
     3. Fail-safe: trả về bản đã expand viết tắt nếu LLM fail.
     """
     if not query or not query.strip():
@@ -162,7 +164,7 @@ async def rewrite_query(query: str) -> str:
         return _REWRITE_CACHE[cache_key]
 
     try:
-        rewritten = await asyncio.wait_for(_call_gemini_rewrite(expanded), timeout=5.0)
+        rewritten = await asyncio.wait_for(_call_gemini_rewrite(expanded), timeout=2.5)
         rewritten = rewritten.strip().strip('"').strip("'")
         # Sanity check: Gemini có thể trả về câu trả lời thay vì chuẩn hóa
         # Dấu hiệu: output quá dài so với input, hoặc không chứa ký tự tiếng Việt
@@ -180,7 +182,7 @@ async def rewrite_query(query: str) -> str:
             logger.info("query_rewriter: '%s' → '%s' (via LLM)", query, rewritten)
             return rewritten
     except asyncio.TimeoutError:
-        logger.warning("query_rewriter: LLM timeout (5s) cho query '%s', dùng bản expand viết tắt", query)
+        logger.warning("query_rewriter: LLM timeout (2.5s) cho query '%s', dùng bản expand viết tắt", query)
     except Exception as e:
         logger.warning("query_rewriter: LLM lỗi cho query '%s': %s — dùng bản expand viết tắt", query, e)
 

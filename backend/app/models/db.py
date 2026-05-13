@@ -27,9 +27,8 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_timeout=30,      
     echo=settings.DEBUG,
-    # DI CHUYỂN RA ĐÂY:
-    prepared_statement_cache_size=0, 
-    # connect_args chỉ giữ lại các tham số truyền trực tiếp cho driver asyncpg
+    # SỬA TẠI ĐÂY: Đổi 'prepared_statement_cache_size' thành 'statement_cache_size'
+    statement_cache_size=0, 
     connect_args={
         "ssl": "require",
         "server_settings": {

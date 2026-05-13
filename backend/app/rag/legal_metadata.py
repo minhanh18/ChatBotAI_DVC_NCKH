@@ -29,7 +29,8 @@ def sha256_text(value: str) -> str:
 
 
 def detect_legal_document_metadata(name: str, text: str | None) -> dict[str, Any]:
-    title_source = f"{name}\n{(text or "")[:1500]}"
+    _safe_text = (text or "")[:1500]
+    title_source = f"{name}\n{_safe_text}"
     document_number = None
     document_type = None
     for pattern, doc_type in TITLE_NUMBER_PATTERNS:

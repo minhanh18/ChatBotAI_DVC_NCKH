@@ -291,14 +291,14 @@ def _build_ai_prompt(domain_instructions: str, query: str = "") -> str:
 ## ⚠️ Câu hỏi về một khía cạnh cụ thể
 Người dùng chỉ hỏi về **một khía cạnh cụ thể** (hồ sơ / lệ phí / thời gian / điều kiện / nơi nộp...).
 - **CHỈ trả lời đúng khía cạnh đó**, KHÔNG liệt kê thêm trình tự các bước, không thêm căn cứ pháp lý dài, không thêm lưu ý không liên quan.
-- Nếu người dùng hỏi **hồ sơ**: chỉ liệt kê danh sách giấy tờ/tài liệu cần chuẩn bị.
+- Nếu người dùng hỏi **hồ sơ / giấy tờ**: chỉ liệt kê danh sách giấy tờ/tài liệu cần chuẩn bị.
 - Nếu người dùng hỏi **lệ phí**: chỉ nêu mức phí (đầy đủ các mức theo hình thức nộp).
 - Nếu người dùng hỏi **thời gian**: chỉ nêu thời hạn giải quyết.
 - Tuyệt đối không tự mở rộng sang các mục khác như trình tự thực hiện, căn cứ pháp lý hay lưu ý trừ khi được hỏi.
-
 """
 
     return f"""{_get_identity()}{focused_constraint}
+
 ## Khi trả lời từ kiến thức tổng hợp
 
 ### Thông tin pháp luật
@@ -1675,7 +1675,7 @@ class ChatEngine:
             max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
             top_p=settings.GEMINI_TOP_P,
         )
-        # Config cho Flash-Lite (tiền xử lý): tắt thinking để tối đa tốc độ
+        # Config riêng cho Lite model — có thể override temperature nếu cần
         self._lite_gen_config = genai.GenerationConfig(
             temperature=settings.GEMINI_TEMPERATURE,
             max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
@@ -1683,56 +1683,26 @@ class ChatEngine:
         )
 
     def _make_model(self, query: str = "") -> genai.GenerativeModel:
-        """Tạo Flash model (sinh phản hồi chính).
-
-        Thinking budget:
-        - Câu hỏi pháp lý / thủ tục phức tạp → GEMINI_THINKING_BUDGET (Medium/High)
-        - Câu hỏi thông thường → budget thấp hơn để tiết kiệm latency
-        """
+        """Tạo Flash model (sinh phản hồi chính, truy xuất, tìm kiếm, đánh giá)."""
         key = _key_pool.get_available_key()
         if key:
             genai.configure(api_key=key)
-
-        # Điều chỉnh thinking budget dựa trên độ phức tạp của query
-        if query and (is_legal_query(query) or is_procedure_query(query)):
-            thinking_budget = settings.GEMINI_THINKING_BUDGET  # Medium/High cho câu pháp lý
-        else:
-            thinking_budget = max(0, settings.GEMINI_THINKING_BUDGET // 4)  # Low cho câu thông thường
-
-        extra_kwargs: dict = {}
-        if thinking_budget > 0:
-            extra_kwargs["generation_config"] = genai.GenerationConfig(
-                temperature=settings.GEMINI_TEMPERATURE,
-                max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
-                top_p=settings.GEMINI_TOP_P,
-                thinking_config={"thinking_budget": thinking_budget},
-            )
-        else:
-            extra_kwargs["generation_config"] = self._gen_config
-
-        return genai.GenerativeModel(settings.GEMINI_MODEL, **extra_kwargs)
+        return genai.GenerativeModel(
+            settings.GEMINI_MODEL,
+            generation_config=self._gen_config,
+        )
 
     def _make_lite_model(self) -> genai.GenerativeModel:
-        """Tạo Flash-Lite model (tiền xử lý: phân tích ý định, đọc log ngữ cảnh, tóm tắt session).
-
-        Thinking budget = 0 (tắt) → tốc độ tối đa (Minimal).
+        """Tạo Flash-Lite model (tiền xử lý: chitchat, tóm tắt session, đọc ngữ cảnh).
+        Tốc độ tối đa — không cần suy nghĩ sâu.
         """
         key = _key_pool.get_available_key()
         if key:
             genai.configure(api_key=key)
-
-        extra_kwargs: dict = {}
-        if settings.GEMINI_LITE_THINKING_BUDGET > 0:
-            extra_kwargs["generation_config"] = genai.GenerationConfig(
-                temperature=settings.GEMINI_TEMPERATURE,
-                max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
-                top_p=settings.GEMINI_TOP_P,
-                thinking_config={"thinking_budget": settings.GEMINI_LITE_THINKING_BUDGET},
-            )
-        else:
-            extra_kwargs["generation_config"] = self._lite_gen_config
-
-        return genai.GenerativeModel(settings.GEMINI_LITE_MODEL, **extra_kwargs)
+        return genai.GenerativeModel(
+            settings.GEMINI_LITE_MODEL,
+            generation_config=self._lite_gen_config,
+        )
 
     async def stream_response(
         self,
@@ -2187,7 +2157,7 @@ class ChatEngine:
         if gemini_history and gemini_history[0]["role"] == "user":
             gemini_history[0]["parts"][0] = system_prompt + "\n\n" + gemini_history[0]["parts"][0]
 
-        # Chitchat/greeting: dùng Lite model — không cần suy nghĩ sâu, ưu tiên tốc độ
+        # Chitchat/greeting: dùng Lite model — ưu tiên tốc độ
         def chat_factory():
             return self._make_lite_model().start_chat(history=gemini_history)
 
@@ -2222,9 +2192,8 @@ class ChatEngine:
 
         gemini_history = _build_history(history)
 
-        # RAG: dùng Flash model với thinking budget phù hợp (cao hơn cho câu pháp lý)
         def chat_factory():
-            return self._make_model(query=query).start_chat(history=gemini_history)
+            return self._make_model().start_chat(history=gemini_history)
 
         parts: list[str] = []
         gemini_usage: dict = {}
@@ -2344,9 +2313,10 @@ class ChatEngine:
         else:
             prompt_parts = query
 
-        # AI/web generation: dùng Flash model với thinking budget phù hợp
         def chat_factory():
-            return self._make_model(query=query).start_chat(history=gemini_history)
+            return self._make_model().start_chat(history=gemini_history)
+
+        emitted = False
         async for text in _gemini_stream_in_thread(chat_factory, prompt_parts):
             if text and text.startswith("__usage__:"):
                 # Phát usage_metadata như StreamEvent đặc biệt để caller cập nhật token

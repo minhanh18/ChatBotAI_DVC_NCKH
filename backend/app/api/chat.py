@@ -446,7 +446,11 @@ async def _get_or_create_conversation(db: AsyncSession, conversation_id: Optiona
     safe_key = pseudonymise_session_key(session_key) if session_key else session_key
     conv = Conversation(session_key=safe_key)
     db.add(conv)
-    await db.flush()
+    # commit ngay để conversation visible với mọi DB session khác
+    # (chỉ flush() không đủ — engine.stream_response dùng session riêng
+    #  → FK violation khi insert message vào conversation chưa commit)
+    await db.commit()
+    await db.refresh(conv)
     return conv
 
 

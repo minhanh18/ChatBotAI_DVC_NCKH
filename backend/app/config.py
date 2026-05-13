@@ -42,14 +42,30 @@ class Settings(BaseSettings):
     # Tạo bằng: python -c "import secrets; print(secrets.token_hex(32))"
     SESSION_HMAC_KEY: str = ""
 
-    # ── LLM: Gemini 2.5 Pro (hardcoded, không đổi trên UI) ─
+    # ── LLM: Gemini 3.1 Flash (sinh phản hồi) + Flash-Lite (tiền xử lý) ─
     GEMINI_API_KEY: str = ""
     GEMINI_API_KEYS: list[str] = []   # Danh sách key phụ để xoay vòng khi quota exhausted
     TAVILY_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-pro"
+
+    # Model chính — sinh phản hồi, truy xuất thông tin, tìm kiếm, đánh giá
+    # Dùng thinking_budget cao hơn khi gặp câu hỏi pháp lý phức tạp (set qua code)
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+
+    # Model nhẹ — tiền xử lý: phân tích ý định, đọc log ngữ cảnh, tóm tắt session
+    # Tốc độ tối đa, thinking_budget thấp (Minimal/Low)
+    GEMINI_LITE_MODEL: str = "gemini-2.5-flash-lite"
+
     GEMINI_TEMPERATURE: float = 0.3
     GEMINI_MAX_OUTPUT_TOKENS: int = 4096
     GEMINI_TOP_P: float = 0.8
+
+    # Thinking budget cho Flash (sinh phản hồi)
+    # "auto" = để Gemini tự quyết, hoặc set số token cụ thể (ví dụ: 8192 cho câu pháp lý phức tạp)
+    GEMINI_THINKING_BUDGET: int = 8192         # Medium/High — tránh sai sót pháp lý
+
+    # Thinking budget cho Flash-Lite (tiền xử lý)
+    # Minimal/Low: ưu tiên tốc độ, không cần suy nghĩ sâu
+    GEMINI_LITE_THINKING_BUDGET: int = 0       # 0 = tắt thinking (nhanh nhất)
 
     # ── Embedding ───────────────────────────────────────────
     # Ưu tiên lại model cũ để giữ chất lượng retrieve gần v8.

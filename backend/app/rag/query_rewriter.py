@@ -11,7 +11,7 @@ Xử lý:
 Cơ chế 2 lớp:
 1. Offline: expand viết tắt bằng dictionary → nhanh, không cần API.
 2. LLM (Gemini): dùng GEMINI_MODEL từ settings (mặc định gemini-2.5-flash) để restore dấu + sửa chính tả.
-   - Timeout 10s (tăng từ 3s để tránh false-timeout với cold start).
+   - Timeout 5s (dùng Lite model nên nhanh hơn nhiều so với Flash).
    - KHÔNG import _key_pool từ engine (tránh circular import + deadlock).
    - Dùng GEMINI_API_KEY trực tiếp từ settings, không xoay vòng key.
    - Cache kết quả in-process (512 entries).
@@ -126,7 +126,7 @@ def _needs_rewrite(query: str) -> bool:
     ascii_word_ratio = len(ascii_words) / word_count
 
     # Nếu hơn 30% từ vẫn là ascii-only sau expand → cần LLM restore dấu
-    if ascii_word_ratio > 0.30:
+    if ascii_word_ratio > 0.50:  # chỉ gọi LLM khi >50% từ không dấu
         return True
 
     # Fallback: khớp pattern từ không dấu / viết tắt chưa expand
@@ -143,7 +143,7 @@ async def rewrite_query(query: str) -> str:
 
     Pipeline:
     1. Expand viết tắt offline (instantaneous, no API).
-    2. Nếu vẫn cần rewrite → gọi Gemini với timeout 8s.
+    2. Nếu vẫn cần rewrite → gọi Gemini Lite với timeout 5s.
     3. Fail-safe: trả về bản đã expand viết tắt nếu LLM fail.
     """
     if not query or not query.strip():
@@ -162,8 +162,7 @@ async def rewrite_query(query: str) -> str:
         return _REWRITE_CACHE[cache_key]
 
     try:
-        # Timeout 10s cho gemini-2.5-flash (cold start có thể 3-8s)
-        rewritten = await asyncio.wait_for(_call_gemini_rewrite(expanded), timeout=10.0)
+        rewritten = await asyncio.wait_for(_call_gemini_rewrite(expanded), timeout=5.0)
         rewritten = rewritten.strip().strip('"').strip("'")
         # Sanity check: Gemini có thể trả về câu trả lời thay vì chuẩn hóa
         # Dấu hiệu: output quá dài so với input, hoặc không chứa ký tự tiếng Việt
@@ -181,7 +180,7 @@ async def rewrite_query(query: str) -> str:
             logger.info("query_rewriter: '%s' → '%s' (via LLM)", query, rewritten)
             return rewritten
     except asyncio.TimeoutError:
-        logger.warning("query_rewriter: LLM timeout (10s) cho query '%s', dùng bản expand viết tắt", query)
+        logger.warning("query_rewriter: LLM timeout (5s) cho query '%s', dùng bản expand viết tắt", query)
     except Exception as e:
         logger.warning("query_rewriter: LLM lỗi cho query '%s': %s — dùng bản expand viết tắt", query, e)
 
@@ -214,35 +213,16 @@ async def _call_gemini_rewrite(query: str) -> str:
         # → phải dùng temperature=1.0, và tắt thinking (thinking_budget=0)
         #   để tránh latency cao không cần thiết cho task chuẩn hóa đơn giản.
         # Với các model khác (gemini-1.5-*): temperature=0.0 vẫn OK.
-        model_name = settings.GEMINI_MODEL
-        is_thinking_model = "2.5" in model_name or "thinking" in model_name.lower()
+        # Dùng Lite model cho rewrite — task đơn giản, ưu tiên tốc độ tối đa
+        model_name = settings.GEMINI_LITE_MODEL
 
-        gen_config: dict = {"max_output_tokens": 120}
-        if is_thinking_model:
-            gen_config["temperature"] = 1.0          # bắt buộc với thinking model
-            # Tắt thinking để giảm latency (không cần chain-of-thought cho rewrite)
-            gen_config["thinking_config"] = {"thinking_budget": 0}
-        else:
-            gen_config["temperature"] = 0.0          # deterministic với model thường
+        gen_config: dict = {
+            "max_output_tokens": 120,
+            "temperature": 1.0,   # Flash-Lite yêu cầu temperature >= 1.0
+        }
 
-        try:
-            model = genai.GenerativeModel(
-                model_name,
-                generation_config=gen_config,
-            )
-            response = model.generate_content(_REWRITE_PROMPT + query)
-        except (TypeError, ValueError) as sdk_err:
-            # SDK hiện tại chưa hỗ trợ thinking_config trong GenerationConfig
-            # → thử lại không có thinking_config (model vẫn hoạt động bình thường)
-            if "thinking_config" in str(sdk_err):
-                gen_config_fallback = {k: v for k, v in gen_config.items() if k != "thinking_config"}
-                model = genai.GenerativeModel(
-                    model_name,
-                    generation_config=gen_config_fallback,
-                )
-                response = model.generate_content(_REWRITE_PROMPT + query)
-            else:
-                raise
+        model = genai.GenerativeModel(model_name, generation_config=gen_config)
+        response = model.generate_content(_REWRITE_PROMPT + query)
         return response.text or query
 
     return await asyncio.to_thread(_sync_call)

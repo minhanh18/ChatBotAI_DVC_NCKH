@@ -28,8 +28,8 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
 
-def detect_legal_document_metadata(name: str, text: str) -> dict[str, Any]:
-    title_source = f"{name}\n{text[:1500]}"
+def detect_legal_document_metadata(name: str, text: str | None) -> dict[str, Any]:
+    title_source = f"{name}\n{(text or "")[:1500]}"
     document_number = None
     document_type = None
     for pattern, doc_type in TITLE_NUMBER_PATTERNS:

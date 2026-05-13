@@ -72,10 +72,33 @@ async def startup():
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.create_all)
-            await conn.execute(text("""
-                ALTER TABLE documents
-                ADD COLUMN IF NOT EXISTS file_content BYTEA
-            """))
+
+            # ALTER TABLE file_content BYTEA: chỉ chạy khi cột chưa tồn tại.
+            # Dùng statement_timeout ngắn để không block startup quá lâu.
+            # Nếu R2 đã bật (USE_R2_STORAGE=True), cột này không cần thiết —
+            # bỏ qua hoàn toàn để tránh timeout trên DB lớn.
+            from app.config import settings as _settings
+            if not getattr(_settings, "USE_R2_STORAGE", False):
+                try:
+                    # Kiểm tra cột đã tồn tại chưa trước khi ALTER (tránh lock bảng)
+                    col_exists = await conn.execute(text("""
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'documents' AND column_name = 'file_content'
+                    """))
+                    if not col_exists.fetchone():
+                        await conn.execute(text("SET LOCAL statement_timeout = '10s'"))
+                        await conn.execute(text("""
+                            ALTER TABLE documents
+                            ADD COLUMN IF NOT EXISTS file_content BYTEA
+                        """))
+                        logger.info("✓ Column file_content added to documents")
+                    else:
+                        logger.info("✓ Column file_content already exists, skipping ALTER")
+                except Exception as _alter_err:
+                    logger.warning("ALTER TABLE file_content skipped (non-fatal): %s", _alter_err)
+            else:
+                logger.info("✓ USE_R2_STORAGE=True — skipping file_content column migration")
+
         logger.info("✓ Database ready")
     except Exception as e:
         logger.error("✗ Database startup error (non-fatal): %s", e)

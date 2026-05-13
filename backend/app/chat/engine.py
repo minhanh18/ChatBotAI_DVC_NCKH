@@ -238,6 +238,7 @@ def _build_rag_prompt(context: str, query: str, domain_instructions: str) -> str
 - **Giữ NGUYÊN các đường link** trong tài liệu, đặt link đúng tại bước tương ứng.
 - Không lặp lại tên tài liệu trong nội dung trả lời (tên đã hiển thị ở khu vực Tham khảo thêm).
 - Không dùng đuôi .pdf trong tên tài liệu. Không mở đầu câu trả lời bằng tên tài liệu (ví dụ: "Theo thông tin trong [tên tài liệu]...") — tên tài liệu đã hiển thị tự động ở khu vực Tham khảo thêm.
+- **TUYỆT ĐỐI KHÔNG bắt đầu câu trả lời bằng lời chào** như "Chào bạn,", "Xin chào,", "Chào," — đây là câu hỏi nghiêm túc, không phải cuộc hội thoại xã giao. Vào thẳng nội dung trả lời ngay.
 
 ### Quy tắc trích dẫn số trang
 Mỗi đoạn trong ngữ cảnh được gắn nhãn [Tài liệu N] — N là số thứ tự tài liệu.
@@ -1933,6 +1934,14 @@ class ChatEngine:
                     citations = _used_doc_cits + _web_cits
 
             if response_mode == AnswerMode.RAG and full_text and not is_greeting and not _refusal:
+                # Strip lời chào Gemini tự thêm vào đầu RAG response (dù đã bị prompt cấm).
+                # Nếu để lại thì _ensure_rag_source_lead sẽ chèn câu dẫn nguồn TRƯỚC lời chào
+                # → thứ tự: "Theo thông tin trong... / Chào bạn, / Nội dung" — rất kỳ.
+                # Dùng pattern string bình thường (không raw) để tránh newline literal trong source
+                _greet_pat = '(?i)^(?:ch\u00e0o\s+b\u1ea1n|xin\s+ch\u00e0o|ch\u00e0o)[,!\s]*\n*'
+                _greeting_stripped = re.sub(_greet_pat, '', full_text, count=1).lstrip()
+                if _greeting_stripped:
+                    full_text = _greeting_stripped
                 full_text = _ensure_rag_source_lead(full_text, citations)
 
             # Token chính xác: dùng Gemini usage_metadata nếu có, fallback ước lượng

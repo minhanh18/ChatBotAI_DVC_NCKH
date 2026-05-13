@@ -172,6 +172,10 @@ async def _ingest_document_inner(document_id: str) -> None:
 
         texts = [c.content for c in chunks]
 
+        # Lưu đủ text để detect legal metadata TRƯỚC khi giải phóng RAM
+        # detect_legal_document_metadata chỉ cần 1500 ký tự đầu — không cần giữ toàn bộ
+        raw_text_for_meta = (raw_text or "")[:1500]
+
         # Giải phóng raw_text (có thể hàng MB) trước khi gọi embed — không cần nữa
         raw_text = None
         raw_text_parts = None
@@ -229,7 +233,7 @@ async def _ingest_document_inner(document_id: str) -> None:
             )
             db.add(seg)
 
-        legal_meta = detect_legal_document_metadata(doc_name, raw_text)
+        legal_meta = detect_legal_document_metadata(doc_name, raw_text_for_meta)
         doc.meta = merge_meta(doc.meta, {
             **legal_meta,
             "page_count": max(((chunk.meta or {}).get("page_end") or 0) for chunk in chunks) if chunks else 0,

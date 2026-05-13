@@ -136,12 +136,17 @@ async def upload_document(
     doc_meta["uploaded_at"] = datetime.utcnow().isoformat()
 
     # Tìm đoạn này (khoảng dòng 132):
+    # Khi USE_R2_STORAGE=True: file đã an toàn trên R2, KHÔNG lưu binary vào DB
+    # để tránh double RAM usage và làm đầy PostgreSQL với file nhị phân lớn.
+    # Khi USE_R2_STORAGE=False: vẫn lưu file_content làm backup (ephemeral disk).
+    _file_content_for_db = None if getattr(settings, "USE_R2_STORAGE", False) else content
+
     doc = Document(
         id=UUID(doc_id),
         dataset_id=UUID(dataset_id),
         name=file.filename or f"document_{doc_id}",
         file_path=str(file_path),
-        file_content=content, 
+        file_content=_file_content_for_db,
         file_type=ext,
         file_size=len(content),
         status="pending",
@@ -157,13 +162,22 @@ async def upload_document(
         })
         previous_doc.meta = prev_meta
 
-    # Commit 1: chỉ metadata — nhanh, tránh timeout khi file lớn
+    # Commit metadata — nhanh, không giữ binary content trong transaction
     await db.commit()
 
-    # Commit 2: lưu file_content vào DB làm backup — CHỈ khi không dùng R2.
-    # Khi R2 đã bật, file đã an toàn trên Cloudflare R2, không cần nhồi thêm
-    # vào PostgreSQL (tránh làm đầy DB với file nhị phân lớn).
-    # Ingest chạy concurrently — không block response, không block request khác
+    # Giải phóng RAM ngay: xóa reference đến bytes file trước khi spawn ingest task.
+    # Quan trọng khi file lớn (10-50MB): tránh RAM spike gây OOM crash uvicorn worker.
+    del content
+    if "_file_content_for_db" in dir():
+        del _file_content_for_db
+    import gc as _gc
+    _gc.collect()
+
+    # Ingest chạy async background — không block response.
+    # QUAN TRỌNG: asyncio.create_task chạy trong cùng event loop / process với uvicorn.
+    # Nếu ingest nặng (PDF lớn, nhiều trang), worker sẽ bận và không nhận request mới.
+    # Giải pháp lâu dài: dùng Celery worker riêng. Hiện tại: ingest được giới hạn RAM
+    # qua streaming per-page (PyMuPDF) và INGEST_TIMEOUT_SECONDS=600.
     asyncio.create_task(ingest_document(doc_id))
 
     return {

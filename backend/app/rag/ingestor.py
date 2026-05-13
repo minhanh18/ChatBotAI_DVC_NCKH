@@ -65,21 +65,29 @@ async def _ingest_document_inner(document_id: str) -> None:
 
         file_path = doc.file_path
         if not file_path or not _Path(file_path).exists():
-            # Khôi phục file từ Azure Blob hoặc DB bytes (ephemeral filesystem đã mất file)
+            # Khôi phục file về local disk để ingestor đọc được
             from app.utils.storage import restore_to_local as _restore
-            if doc.file_content and not _Path(file_path or "").exists():
-                ext = doc.file_type or "bin"
-                restored_path = _Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
-                restored_path.parent.mkdir(parents=True, exist_ok=True)
-                restored_path.write_bytes(doc.file_content)
-                file_path = str(restored_path)
-                doc.file_path = file_path
-                logger.info("  ↻ Đã khôi phục file từ DB bytes: %s", restored_path)
-            elif file_path and _restore(file_path):
-                logger.info("  ↻ Đã khôi phục file từ Azure Blob: %s", file_path)
+
+            if getattr(settings, "USE_R2_STORAGE", False):
+                # R2 mode: tải file về disk tạm từ R2 (không có file_content trong DB)
+                if file_path and _restore(file_path):
+                    logger.info("  ↻ Đã khôi phục file từ R2: %s", file_path)
+                else:
+                    await _set_status(db, doc, "error", "File không tìm thấy trên R2. Vui lòng upload lại.")
+                    return
             else:
-                await _set_status(db, doc, "error", "File không còn trên server và không có backup trong DB. Vui lòng upload lại.")
-                return
+                # Local mode: khôi phục từ file_content trong DB
+                if doc.file_content and not _Path(file_path or "").exists():
+                    ext = doc.file_type or "bin"
+                    restored_path = _Path(settings.UPLOAD_DIR) / f"{document_id}.{ext}"
+                    restored_path.parent.mkdir(parents=True, exist_ok=True)
+                    restored_path.write_bytes(doc.file_content)
+                    file_path = str(restored_path)
+                    doc.file_path = file_path
+                    logger.info("  ↻ Đã khôi phục file từ DB bytes: %s", restored_path)
+                else:
+                    await _set_status(db, doc, "error", "File không còn trên server và không có backup trong DB. Vui lòng upload lại.")
+                    return
 
         doc_name = doc.name
         doc_dataset_id = doc.dataset_id
@@ -163,8 +171,18 @@ async def _ingest_document_inner(document_id: str) -> None:
         logger.info("  → Trích xuất %d chunks từ %d ký tự", len(chunks), len(raw_text))
 
         texts = [c.content for c in chunks]
+
+        # Giải phóng raw_text (có thể hàng MB) trước khi gọi embed — không cần nữa
+        raw_text = None
+        raw_text_parts = None
+        gc.collect()
+
         embeddings = await embedding_service.embed_texts(texts)
         # embed_texts có thể mất vài chục giây — KHÔNG giữ DB connection trong lúc này
+
+        # Giải phóng texts list sau khi embed xong — embeddings đã có, texts không cần
+        del texts
+        gc.collect()
 
     except (ExtractorError, ValueError) as e:
         async with AsyncSessionLocal() as db:

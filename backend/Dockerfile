@@ -21,7 +21,10 @@ RUN mkdir -p /tmp/uploads
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
-ENV UVICORN_WORKERS=1
+ENV UVICORN_WORKERS=2
+# 2 workers: 1 xử lý ingest nặng, 1 vẫn nhận chat request bình thường.
+# Render free tier RAM ~512MB: 2 workers × ~150MB idle = ~300MB, còn buffer cho ingest.
+# Nếu upgrade plan (1GB+), có thể tăng lên 3-4.
 
 EXPOSE 8000
 

@@ -67,6 +67,11 @@ _BLOCKED_COMMERCIAL_DOMAINS = [
     "wikipedia.org",
 ]
 
+# Domain trả 403 khi fetch full page — chỉ dùng snippet từ Tavily, không fetch trực tiếp
+_NO_FETCH_DOMAINS = [
+    "thuvienphapluat.vn",
+]
+
 DISPUTE_RECHECK_KEYWORDS = [
     "bạn trả lời sai", "trả lời sai", "câu trước sai", "phản hồi trước sai",
     "sai rồi", "không đúng", "chưa đúng",
@@ -186,8 +191,17 @@ def normalize_query_text(query: str) -> str:
     return clean_text(normalized)
 
 
+# Pattern greeting phổ biến cần strip trước khi gửi Tavily
+_GREETING_PREFIX_RE = re.compile(
+    r"^\s*(xin\s+chào|chào|hello|hi|hey|alo|a\s+lô)[,!.\s]*",
+    re.IGNORECASE,
+)
+
+
 def sanitize_web_query(query: str) -> str:
     normalized = normalize_query_text(query)
+    # Strip greeting ở đầu query — "xin chào, tôi cần..." → "tôi cần..."
+    normalized = _GREETING_PREFIX_RE.sub("", normalized).strip()
     match = re.search(r"Câu hỏi tiếp theo cùng ngữ cảnh\s*:\s*(.+)$", normalized, flags=re.IGNORECASE | re.DOTALL)
     if match:
         followup = clean_text(match.group(1))
@@ -382,6 +396,24 @@ async def search_and_fetch(query: str) -> list[WebResult]:
 
 
 async def fetch_page_context(client: httpx.AsyncClient, url: str, title_hint: str | None = None, snippet_hint: str = "", query: str = "") -> WebResult | None:
+    # Domain trả 403 khi fetch — dùng snippet từ Tavily thay vì fetch full page
+    _domain = get_domain(url)
+    if any(_domain == d or _domain.endswith(f".{d}") for d in _NO_FETCH_DOMAINS):
+        if title_hint and snippet_hint:
+            logger.debug("Skip fetch (no-fetch domain), dùng snippet: %s", url)
+            fetched_at = now_app_time().strftime("%H:%M:%S %d/%m/%Y")
+            result = WebResult(
+                title=title_hint,
+                url=url,
+                snippet=clean_text(snippet_hint),
+                content=clean_text(snippet_hint),
+                domain=_domain,
+                fetched_at=fetched_at,
+            )
+            result.reliability_score = score_domain_reliability(_domain, query, title_hint)
+            result.freshness_score = 0.5
+            return result
+        return None
     try:
         response = await client.get(url)
         response.raise_for_status()

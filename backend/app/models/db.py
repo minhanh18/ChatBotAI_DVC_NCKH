@@ -27,10 +27,11 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_timeout=30,      
     echo=settings.DEBUG,
-    # SỬA TẠI ĐÂY: Đổi 'prepared_statement_cache_size' thành 'statement_cache_size'
-    statement_cache_size=0, 
+    # KHÔNG ĐỂ statement_cache_size Ở ĐÂY NỮA
     connect_args={
         "ssl": "require",
+        "prepared_statement_cache_size": 0,
+        "statement_cache_size": 0,
         "server_settings": {
             "statement_timeout": "30000",
             "idle_in_transaction_session_timeout": "60000",

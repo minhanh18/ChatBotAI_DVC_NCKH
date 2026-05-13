@@ -40,7 +40,7 @@ function ThinkingIndicator({ compact }: { compact: boolean }) {
     const dots = '.'.repeat((Math.floor(elapsed / 1.5) % 3) + 1);
     return (
       <span className={`text-[#b27454] ${compact ? 'text-xs' : 'text-sm'}`}>
-        Vui lòng đợi thêm một chút<span className="font-mono tracking-widest">{dots}</span>
+        Tôi đang cố gắng truy xuất thông tin, vui lòng chờ thêm giây lát ...<span className="font-mono tracking-widest">{dots}</span>
       </span>
     );
   }

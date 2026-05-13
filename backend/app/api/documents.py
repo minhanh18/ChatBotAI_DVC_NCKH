@@ -370,11 +370,14 @@ async def serve_document_file(request: Request, document_id: str, db: AsyncSessi
 
         # Xử lý GET request (trả về nội dung file)
         from starlette.responses import Response as BytesResponse
+        from urllib.parse import quote as _url_quote
+        # RFC 5987: encode tên file UTF-8 để tránh UnicodeEncodeError với ký tự tiếng Việt
+        _safe_filename = _url_quote(doc.name.encode("utf-8"), safe="")
         return BytesResponse(
             content=file_bytes,
             media_type=media_type,
             headers={
-                "Content-Disposition": f'inline; filename="{doc.name}"',
+                "Content-Disposition": f"inline; filename*=UTF-8''{_safe_filename}",
                 "Cache-Control": "private, max-age=3600",
                 "X-Content-Type-Options": "nosniff",
             },

@@ -123,6 +123,16 @@ def is_focused_aspect_query(query: str) -> bool:
         r"\b(kết quả|nhận ở đâu|trả kết quả|nhận lại|nhận được gì|nhận như thế nào)\b",
         # Hỏi riêng về căn cứ pháp lý
         r"\b(căn cứ pháp lý|quy định (nào|tại đâu)|luật nào|theo (điều|khoản|nghị định|thông tư) nào)\b",
+        # Hỏi về TRƯỜNG HỢP / TÌNH HUỐNG cụ thể (không phải hỏi toàn bộ thủ tục)
+        # Ví dụ: "trường hợp nào bắt buộc", "khi nào phải đăng ký", "có bắt buộc không"
+        r"\b(trường hợp nào|trường hợp nào thì|những trường hợp|các trường hợp|trường hợp (bắt buộc|được miễn|không cần|cần))\b",
+        r"\b(khi nào (phải|cần|bắt buộc|được phép|không cần)|có bắt buộc không|bắt buộc không|có cần không|có phải không)\b",
+        r"\b(truong hop nao|khi nao phai|co bat buoc khong)\b",  # không dấu
+        # Hỏi về định nghĩa / khái niệm (câu hỏi thực chất, không phải toàn bộ thủ tục)
+        r"\b(là gì|là như thế nào|nghĩa là gì|hiểu như thế nào|được hiểu là)\b",
+        r"\b(la gi|la nhu the nao|nghia la gi)\b",  # không dấu
+        # Hỏi về phạm vi / đối tượng áp dụng
+        r"\b(áp dụng cho (ai|những ai|đối tượng nào)|đối tượng nào (phải|cần|bắt buộc)|ai (phải|cần|bắt buộc))\b",
     ]
     # Nhưng KHÔNG phải focused nếu có từ "toàn bộ", "tất cả", "đầy đủ", "hướng dẫn", "cách thực hiện"
     _FULL_PROCEDURE_OVERRIDES = [

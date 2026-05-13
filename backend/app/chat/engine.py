@@ -2046,13 +2046,19 @@ class ChatEngine:
             # Client nhận "done" → loadMessages → render ngay lập tức.
             # legal_refs / source_refs sẽ được gửi SAU done dưới dạng bonus events
             # nếu frontend hỗ trợ xử lý sau done (hoặc bỏ qua nếu stream đã đóng).
-            latency_ms = int((time.time() - start_ms) * 1000)
+            #
+            # FIX timing: commit trước, đo latency SAU commit — bao gồm toàn bộ
+            # thời gian xử lý server-side (kể cả I/O DB) trước khi done đến client.
+            # Điều này giúp latency_ms ghi nhận sát hơn với thời gian người dùng thực sự chờ.
             try:
-                msg.latency_ms = latency_ms
-                usage.latency_ms = latency_ms
+                # Lưu giá trị tạm trước khi có latency chính xác
+                msg.latency_ms = int((time.time() - start_ms) * 1000)
+                usage.latency_ms = msg.latency_ms
                 await db.commit()
             except Exception:
                 pass
+            # Đo latency SAU commit — giá trị này sát nhất với thời gian user thực sự chờ
+            latency_ms = int((time.time() - start_ms) * 1000)
 
             yield _sse(
                 StreamEvent(

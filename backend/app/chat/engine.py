@@ -1090,7 +1090,13 @@ def _remove_model_reference_sections(text: str) -> str:
         if skipping:
             if not stripped:
                 continue
-            if re.match(r'^(?:[-*•]\s+|\d+[.)]\s+)', stripped) or 'http' in stripped.lower() or 'xem tài liệu' in stripped.lower():
+            # Xóa bullet/list item hoặc dòng "xem tài liệu" trong section nguồn
+            # KHÔNG xóa link standalone dạng [Tên](url) hoặc 👉 [Tên](url) vì đó là link hành động thực sự
+            _is_bullet = re.match(r'^(?:[-*•]\s+|\d+[.)]\s+)', stripped)
+            _is_action_link_line = re.match(r'^(?:👉\s*)?\[.+\]\(https?://', stripped)
+            if _is_bullet or 'xem tài liệu' in stripped.lower():
+                continue
+            if 'http' in stripped.lower() and not _is_action_link_line:
                 continue
             if re.match(r'^#{1,6}\s+', stripped) or re.match(
                 r'^(Lưu ý|Tóm lại|Kết luận|Ví dụ|Các bước|Hồ sơ|Điều kiện)\b', stripped, flags=re.IGNORECASE
@@ -1193,10 +1199,14 @@ def _allowed_urls_from_citations(citations: list[Citation] | None) -> set[str]:
     urls: set[str] = set()
     for c in citations or []:
         if c.url:
-            urls.add(c.url.strip())
+            u = c.url.strip().rstrip('/')
+            urls.add(u)
+            urls.add(u + '/')  # chấp nhận cả dạng có trailing slash
         # Nếu web context trích được link thao tác/hồ sơ, URL đó được nhúng trong content citation.
         for m in re.finditer(r"https?://[^\s\)\]<>\"']+", c.content or ''):
-            urls.add(m.group(0).rstrip('.,;)'))
+            u = m.group(0).rstrip('.,;)/')
+            urls.add(u)
+            urls.add(u + '/')
     return urls
 
 
@@ -1227,7 +1237,9 @@ def _guard_untrusted_action_links(text: str, citations: list[Citation] | None = 
         url = match.group(2).strip()
         if not _is_action_link_label(label):
             return match.group(0)
-        if url in allowed:
+        # So sánh cả dạng có và không có trailing slash
+        url_norm = url.rstrip('/')
+        if url in allowed or url_norm in allowed or (url_norm + '/') in allowed:
             return match.group(0)
         # Cho phép link nội bộ /api/documents vì do hệ thống tạo, không phải model bịa.
         if url.startswith('/api/documents/'):

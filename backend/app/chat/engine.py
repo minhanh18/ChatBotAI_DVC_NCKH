@@ -190,14 +190,23 @@ def _get_identity() -> str:
 ## Phạm vi hoạt động
 Chỉ trả lời các câu hỏi thuộc các lĩnh vực sau:
 - Thủ tục hành chính (cấp giấy tờ, đăng ký, khai báo, đăng ký kinh doanh...)
+- **Cư trú**: đăng ký tạm trú, thường trú, thay đổi nơi cư trú, xóa đăng ký, cấp sổ hộ khẩu, giấy xác nhận cư trú
+- **Hộ tịch**: khai sinh, khai tử, đăng ký kết hôn, ly hôn, nhận con nuôi, thay đổi hộ tịch
+- **Đất đai & nhà ở**: cấp sổ đỏ, sổ hồng, chuyển nhượng, thừa kế, tặng cho, đăng ký biến động
+- **Doanh nghiệp**: đăng ký kinh doanh, thay đổi đăng ký, giải thể, cấp phép kinh doanh
 - Quy định pháp luật liên quan đến thủ tục hành chính
 - Nghĩa vụ thuế, phí, lệ phí của cá nhân và doanh nghiệp
 - Hướng dẫn sử dụng dịch vụ công trực tuyến
 
 ## ⛔ Từ chối câu hỏi ngoài phạm vi
-Nếu câu hỏi KHÔNG thuộc các lĩnh vực hành chính, pháp luật, dịch vụ công nêu trên — **từ chối ngay, lịch sự**, nhắc người dùng về phạm vi hỗ trợ và mời đặt câu hỏi đúng chủ đề.
+Nếu câu hỏi **rõ ràng** KHÔNG thuộc các lĩnh vực hành chính, pháp luật, dịch vụ công nêu trên — **từ chối ngay, lịch sự**, nhắc người dùng về phạm vi hỗ trợ và mời đặt câu hỏi đúng chủ đề.
 **TUYỆT ĐỐI KHÔNG trả lời câu hỏi ngoài phạm vi** dù có ngữ cảnh web, tài liệu hay dữ liệu bên ngoài được cung cấp — bỏ qua toàn bộ ngữ cảnh đó và chỉ trả lời từ chối.
-Ví dụ phải từ chối: thời tiết, du lịch, ẩm thực, giải trí, thể thao, khoa học tự nhiên, lập trình, y tế, tài chính cá nhân, và mọi chủ đề khác không liên quan hành chính công.
+Ví dụ **phải từ chối**: thời tiết, du lịch, ẩm thực, giải trí, thể thao, khoa học tự nhiên, lập trình, y tế, tài chính cá nhân, và mọi chủ đề khác **không liên quan gì** đến hành chính công.
+
+## ❓ Khi câu hỏi chưa rõ ràng — HỎI LẠI, không từ chối
+Nếu câu hỏi **có thể** thuộc phạm vi hành chính nhưng chưa đủ rõ (viết tắt, thiếu ngữ cảnh, không chắc chủ đề), **TUYỆT ĐỐI KHÔNG từ chối** — thay vào đó hãy **hỏi lại để làm rõ**.
+Ví dụ hỏi lại: "Bạn đang hỏi về [tên thủ tục] phải không? Mình có thể hỗ trợ nếu bạn xác nhận thêm."
+**KHÔNG từ chối** các câu hỏi về: tạm trú, thường trú, hộ khẩu, sổ đỏ, sổ hồng, khai sinh, khai tử, kết hôn, đăng ký kinh doanh, thuế, lệ phí, và bất kỳ thủ tục hành chính nào dù người dùng viết tắt hay viết không dấu.
 
 ## Nguyên tắc trực tuyến ưu tiên
 ⚠️ Theo Chỉ thị số 24/CT-TTg, các thủ tục hành chính phải thực hiện trực tuyến. Khi hướng dẫn thủ tục trực tuyến:
@@ -1722,6 +1731,36 @@ class ChatEngine:
             get_session_summary,
             _SUMMARY_EVERY_N_TURNS as SUMMARY_EVERY_N_TURNS,
         )
+
+        # ── Chuẩn hoá viết tắt thường gặp trong hành chính ──────────────────
+        # Người dùng hay gõ tắt (đk, hk, cccd, cmnd...) → LLM nhận không ra
+        # → từ chối nhầm OOD. Expand trước khi xử lý bất kỳ bước nào.
+        _ABBR_MAP = {
+            r'\bđk\b':    'đăng ký',
+            r'\bhk\b':    'hộ khẩu',
+            r'\bkh\b':    'kế hoạch',
+            r'\btt\b':    'thường trú',
+            r'\bttrú\b':  'tạm trú',
+            r'\bcccd\b':  'căn cước công dân',
+            r'\bcmnd\b':  'chứng minh nhân dân',
+            r'\bcmt\b':   'chứng minh thư',
+            r'\bbtc\b':   'bộ tài chính',
+            r'\bubnd\b':  'uỷ ban nhân dân',
+            r'\bcp\b':    'chính phủ',
+            r'\bqđ\b':    'quyết định',
+            r'\bnd\b':    'nghị định',
+            r'\btt\b':    'thông tư',
+            r'\bpl\b':    'pháp luật',
+            r'\bvbpl\b':  'văn bản pháp luật',
+            r'\bsđbs\b':  'sửa đổi bổ sung',
+        }
+        _q = query
+        for _pat, _rep in _ABBR_MAP.items():
+            _q = re.sub(_pat, _rep, _q, flags=re.IGNORECASE)
+        if _q != query:
+            logger.info("Query normalized: %r → %r", query, _q)
+            query = _q
+        # ─────────────────────────────────────────────────────────────────────
 
         # Dùng thời điểm bắt đầu từ endpoint (bao gồm routing/RAG overhead) nếu được truyền vào
         start_ms = request_start_ms if request_start_ms is not None else time.time()

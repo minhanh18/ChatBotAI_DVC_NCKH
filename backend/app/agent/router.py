@@ -64,6 +64,24 @@ class AgentRouter:
                 assessment={"reason": reason, "confidence": "high", "rag_first_checked": False},
             )
 
+        # Expand viết tắt trước khi retrieve để RAG tìm đúng chunk
+        import re as _re
+        _ABBR_MAP = {
+            r'\bđk\b':   'đăng ký',
+            r'\bhk\b':   'hộ khẩu',
+            r'\bcccd\b': 'căn cước công dân',
+            r'\bcmnd\b': 'chứng minh nhân dân',
+            r'\bcmt\b':  'chứng minh thư',
+            r'\bubnd\b': 'uỷ ban nhân dân',
+            r'\bqđ\b':   'quyết định',
+        }
+        _q = query
+        for _pat, _rep in _ABBR_MAP.items():
+            _q = _re.sub(_pat, _rep, _q, flags=_re.IGNORECASE)
+        if _q != query:
+            logger.info("Router query normalized: %r → %r", query, _q)
+            query = _q
+
         has_docs = await self._has_indexed_documents(db, dataset_id=dataset_id)
         chunks: list[RetrievedChunk] = []
 

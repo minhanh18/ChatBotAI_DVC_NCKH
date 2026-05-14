@@ -424,7 +424,7 @@ function CitationsPanel({
                           setPdfModal({
                             url: docPageUrl,
                             title,
-                            pageNumber: citation.page_number ?? undefined,
+                            pageNumber: undefined, // Fix #1: panel nguồn luôn mở ở trang đầu, không nhảy trang
                           })
                         }
                         className={`font-medium text-left hover:underline underline-offset-2 ${
@@ -789,8 +789,28 @@ export function MessageBubble({
     utterance.rate = 1;
     utterance.pitch = 1;
 
-    const cachedVoices = voicesRef.current.length > 0 ? voicesRef.current : window.speechSynthesis.getVoices();
-    const viVoice = cachedVoices.find((voice) => voice.lang === 'vi-VN') ?? cachedVoices.find((voice) => voice.lang.startsWith('vi'));
+    // Fix #8: đảm bảo voices đã load; ưu tiên giọng nam tiếng Việt
+    const freshVoices = window.speechSynthesis.getVoices();
+    if (freshVoices.length > 0) voicesRef.current = freshVoices;
+    const allVoices = voicesRef.current;
+
+    const viVoices = allVoices.filter(
+      (v) => v.lang === 'vi-VN' || v.lang.startsWith('vi'),
+    );
+
+    // Tên giọng nam tiếng Việt phổ biến trên Windows/Chrome
+    const MALE_SIGNALS = ['nam', 'male', 'hung', 'son', 'quoc'];
+    const FEMALE_SIGNALS = ['lan', 'linh', 'mai', 'nhi', 'thu', 'female', 'woman'];
+
+    const maleVoice = viVoices.find((v) => {
+      const n = v.name.toLowerCase();
+      return MALE_SIGNALS.some((m) => n.includes(m));
+    });
+    const nonFemaleVoice = viVoices.find((v) => {
+      const n = v.name.toLowerCase();
+      return !FEMALE_SIGNALS.some((f) => n.includes(f));
+    });
+    const viVoice = maleVoice ?? nonFemaleVoice ?? viVoices[0] ?? null;
 
     if (viVoice) utterance.voice = viVoice;
 
@@ -967,7 +987,7 @@ export function MessageBubble({
             </div>
 
             <div
-              className={`mt-1.5 flex flex-wrap items-center gap-1.5 ${
+              className={`mt-1.5 flex flex-wrap items-center ${compactWarm ? 'gap-1' : 'gap-1.5'} ${
                 compactWarm ? 'text-[10px]' : 'text-[11px]'
               } ${isWarm ? 'text-[#a08a80]' : 'text-slate-400'} ${isUser ? 'justify-end mr-1' : 'justify-start ml-1'}`}
             >
@@ -981,7 +1001,7 @@ export function MessageBubble({
                 </span>
               )}
 
-              {!isUser && <AnswerModeBadge mode={streamingMode} compact={compactWarm} warm={isWarm} />}
+              {!isUser && !isStreaming && <AnswerModeBadge mode={streamingMode} compact={compactWarm} warm={isWarm} />}
 
               {!isUser && !isStreaming && (
                 <>
@@ -1011,18 +1031,7 @@ export function MessageBubble({
                 </>
               )}
 
-              {isStreaming && !isUser && onStop && (
-                <button
-                  type="button"
-                  onClick={onStop}
-                  className={`inline-flex items-center gap-1 rounded-full border transition-colors ${
-                    compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'
-                  } ${isWarm ? 'border-[#ead5c9] bg-white text-[#8c533f] hover:border-[#d8b6a6]' : 'border-slate-200 bg-white text-slate-500 hover:text-slate-700'}`}
-                >
-                  <Square size={compactWarm ? 10 : 11} />
-                  Dừng
-                </button>
-              )}
+              {/* Fix #6: Nút Dừng đã có ở thanh input ChatWindow — không hiện thêm ở đây */}
 
               {!isUser && !isStreaming && onFeedback && (
                 <>
@@ -1031,7 +1040,7 @@ export function MessageBubble({
                     onClick={() => submitFeedback('like', feedbackType === 'like' ? { toggle: true } : undefined)}
                     disabled={feedbackLoading}
                     className={`inline-flex items-center gap-1 rounded-full border transition-colors ${
-                      compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'
+                      compactWarm ? 'px-1.5 py-0.5' : 'px-2.5 py-1'
                     } ${
                       feedbackType === 'like'
                         ? 'border-[#d8b49e] bg-[#fbefe8] text-[#8c533f]'
@@ -1053,7 +1062,7 @@ export function MessageBubble({
                     }}
                     disabled={feedbackLoading}
                     className={`inline-flex items-center gap-1 rounded-full border transition-colors ${
-                      compactWarm ? 'px-2 py-0.5' : 'px-2.5 py-1'
+                      compactWarm ? 'px-1.5 py-0.5' : 'px-2.5 py-1'
                     } ${
                       feedbackType === 'dislike'
                         ? 'border-[#d8b49e] bg-[#fbefe8] text-[#8c533f]'

@@ -107,11 +107,10 @@ def is_focused_aspect_query(query: str) -> bool:
         r"\b(hồ sơ|giấy tờ|tài liệu|văn bản|cần (chuẩn bị|mang|nộp|có)|cần những gì|gồm (những gì|gì|các gì))\b",
         r"\b(ho so|giay to|can chuan bi|can nhung gi|gom nhung gi)\b",  # không dấu
         # Hỏi về lệ phí / chi phí (cả có dấu và không dấu, và câu hỏi tiếp theo ngắn)
-        r"\b(lệ phí|phí|chi phí|mất bao nhiêu tiền|bao nhiêu tiền|miễn phí không|có mất phí không)\b",
-        r"\b(le phi|phi|mat bao nhieu|bao nhieu tien|mien phi khong)\b",  # không dấu
-        r"\b(như nào|như thế nào|thế nào|ra sao|bao nhiêu)\b",  # câu hỏi tiếp theo ngắn về số/cách
-        # Hỏi về thời gian
-        r"\b(mất bao lâu|thời gian|bao nhiêu ngày|bao nhiêu giờ|bao lâu|thời hạn giải quyết|khi nào xong)\b",
+        r"\b(lệ phí|chi phí|mất bao nhiêu tiền|bao nhiêu tiền|miễn phí không|có mất phí không)\b",
+        r"\b(le phi|mat bao nhieu|bao nhieu tien|mien phi khong)\b",  # không dấu
+        # Hỏi về thời gian — chỉ dạng câu hỏi rõ ràng về thời hạn
+        r"\b(mất bao lâu|bao nhiêu ngày|bao nhiêu giờ|bao lâu|thời hạn giải quyết|khi nào xong)\b",
         r"\b(mat bao lau|bao nhieu ngay|bao lau|khi nao xong)\b",  # không dấu
         # Hỏi về điều kiện / đối tượng
         r"\b(điều kiện|yêu cầu|đối tượng|tiêu chuẩn|tiêu chí)\b",
@@ -123,21 +122,24 @@ def is_focused_aspect_query(query: str) -> bool:
         r"\b(kết quả|nhận ở đâu|trả kết quả|nhận lại|nhận được gì|nhận như thế nào)\b",
         # Hỏi riêng về căn cứ pháp lý
         r"\b(căn cứ pháp lý|quy định (nào|tại đâu)|luật nào|theo (điều|khoản|nghị định|thông tư) nào)\b",
-        # Hỏi về TRƯỜNG HỢP / TÌNH HUỐNG cụ thể (không phải hỏi toàn bộ thủ tục)
-        # Ví dụ: "trường hợp nào bắt buộc", "khi nào phải đăng ký", "có bắt buộc không"
+        # Hỏi về TRƯỜNG HỢP / TÌNH HUỐNG cụ thể — phải có từ "trường hợp" rõ ràng
         r"\b(trường hợp nào|trường hợp nào thì|những trường hợp|các trường hợp|trường hợp (bắt buộc|được miễn|không cần|cần))\b",
         r"\b(khi nào (phải|cần|bắt buộc|được phép|không cần)|có bắt buộc không|bắt buộc không|có cần không|có phải không)\b",
         r"\b(truong hop nao|khi nao phai|co bat buoc khong)\b",  # không dấu
-        # Hỏi về định nghĩa / khái niệm (câu hỏi thực chất, không phải toàn bộ thủ tục)
-        r"\b(là gì|là như thế nào|nghĩa là gì|hiểu như thế nào|được hiểu là)\b",
-        r"\b(la gi|la nhu the nao|nghia la gi)\b",  # không dấu
+        # Hỏi về định nghĩa / khái niệm — chỉ khi có "là gì" / "nghĩa là gì" rõ ràng
+        r"\b(là gì|nghĩa là gì|được hiểu là)\b",
+        r"\b(la gi|nghia la gi)\b",  # không dấu
         # Hỏi về phạm vi / đối tượng áp dụng
         r"\b(áp dụng cho (ai|những ai|đối tượng nào)|đối tượng nào (phải|cần|bắt buộc)|ai (phải|cần|bắt buộc))\b",
     ]
-    # Nhưng KHÔNG phải focused nếu có từ "toàn bộ", "tất cả", "đầy đủ", "hướng dẫn", "cách thực hiện"
+    # KHÔNG phải focused nếu có từ "toàn bộ", "tất cả", "đầy đủ", "hướng dẫn", "cách thực hiện"
+    # Thêm: "thế nào", "như thế nào", "ra sao" khi đi kèm thủ tục → là hỏi toàn bộ thủ tục
     _FULL_PROCEDURE_OVERRIDES = [
         r"\b(toàn bộ|tất cả|đầy đủ|hướng dẫn (thủ tục|cách|làm)|cách thực hiện|thực hiện như thế nào|quy trình|các bước)\b",
         r"\b(thủ tục (đăng ký|xin|cấp|làm|nộp)|làm thủ tục|thực hiện thủ tục)\b",
+        # Fix #7: "thế nào / như thế nào / ra sao" đứng sau động từ thủ tục → hỏi TOÀN BỘ, không phải focused
+        r"\b(đăng ký|làm|xin|cấp|nộp|thực hiện).{0,30}(thế nào|như thế nào|ra sao)\b",
+        r"\b(thủ tục|quy trình|cách).{0,30}(thế nào|như thế nào|ra sao)\b",
     ]
     has_focused = any(re.search(p, q) for p in _FOCUSED_PATTERNS)
     has_full_override = any(re.search(p, q) for p in _FULL_PROCEDURE_OVERRIDES)
@@ -329,17 +331,19 @@ def build_safe_fallback_answer(query: str, assessment: RetrievalAssessment) -> s
     authority = assessment.authority_hint or authority_hint_for_query(query)
     if is_procedure_query(query):
         return (
-            "Mình chưa đủ cơ sở để khẳng định chính xác hoàn toàn về thủ tục này dựa trên tài liệu hiện có.\n\n"
-            "Bạn nên đối chiếu thêm trên nguồn chính thức hoặc liên hệ trực tiếp "
-            f"**{authority}** để được hướng dẫn đúng theo trường hợp cụ thể của bạn."
+            "⚠️ **Thông tin chưa được xác thực từ tài liệu chính thức.**\n\n"
+            "Hệ thống chưa tìm được căn cứ pháp lý hoặc quy định cụ thể đủ tin cậy để hướng dẫn chính xác thủ tục này.\n\n"
+            f"Bạn cần liên hệ trực tiếp **{authority}** để được hướng dẫn đúng theo trường hợp cụ thể, "
+            "tránh làm sai hoặc thiếu hồ sơ."
         )
     if is_legal_query(query):
         return (
-            "Mình chưa đủ cơ sở để khẳng định chính xác hoàn toàn về quy định này tại thời điểm hiện tại.\n\n"
-            "Bạn nên kiểm tra thêm trên văn bản hoặc nguồn chính thức, và nếu cần thì liên hệ trực tiếp "
-            f"**{authority}** để được xác nhận theo hồ sơ thực tế."
+            "⚠️ **Thông tin chưa được xác thực từ văn bản pháp luật hiện hành.**\n\n"
+            "Hệ thống chưa tìm được quy định cụ thể đủ cơ sở để khẳng định chắc chắn về nội dung này.\n\n"
+            f"Bạn cần liên hệ **{authority}** hoặc tra cứu trực tiếp tại văn bản gốc "
+            "để xác nhận thông tin chính xác theo hồ sơ thực tế."
         )
     return (
-        "Mình chưa có đủ căn cứ đáng tin để trả lời chắc chắn câu này. "
-        "Bạn vui lòng cung cấp thêm bối cảnh hoặc tài liệu liên quan để mình kiểm tra lại chính xác hơn."
+        "⚠️ **Thông tin chưa xác thực được từ nguồn tài liệu hiện có.**\n\n"
+        f"Vui lòng liên hệ **{authority}** để được cung cấp thông tin chi tiết và chính xác."
     )

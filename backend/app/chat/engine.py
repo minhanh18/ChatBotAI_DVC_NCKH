@@ -1776,119 +1776,188 @@ class ChatEngine:
                                 effective_chunks = list(effective_chunks or []) + extra
                                 logger.info("Session cache HIT — appended %d cached chunks (total=%d)", len(extra), len(effective_chunks))
 
-                    # Nếu không có chunk nào (fresh + cached đều rỗng) → skip _generate_rag_answer.
-                    # Gọi Gemini với context rỗng chắc chắn trả về [[RAG_NO_ANSWER]],
-                    # vừa tốn ~2–3s LLM call vô ích vừa tốn token.
+                    # ── FIX PERFORMANCE ────────────────────────────────────────────────
+                    # Trước đây: _generate_rag_answer() buffer TOÀN BỘ phản hồi Gemini
+                    # rồi mới re-stream qua _stream_static_text() → user chờ 3–8s trước
+                    # khi thấy ký tự đầu tiên.
+                    #
+                    # Giờ: dùng _stream_rag_answer_with_peek() — buffer chỉ 280 ký tự
+                    # đầu để kiểm tra [[RAG_NO_ANSWER]], nếu có nội dung thực thì stream
+                    # thẳng tới client ngay. _rag_direct_streamed=True khi đã stream.
+                    # ───────────────────────────────────────────────────────────────────
+                    _rag_direct_streamed = False   # True khi đã stream RAG trực tiếp xong
+
                     if not effective_chunks:
                         logger.info("Skip RAG generate — no chunks available, going straight to web fallback")
                         rag_text = "[[RAG_NO_ANSWER]]"
                         rag_citations, rag_usage = [], {}
-                    else:
+
+                    elif force_web:
+                        # force_web=True: cần biết toàn bộ RAG text trước khi quyết định
+                        # → dùng _generate_rag_answer (buffered) như cũ, chấp nhận latency
                         rag_text, rag_citations, rag_usage = await self._generate_rag_answer(
                             query=query,
                             chunks=effective_chunks,
                             history=history,
                             session_summary=get_session_summary(session_key) if session_key else None,
                         )
-                    rag_text = _clean_response_text(rag_text, rag_citations)
 
-                    # Kiểm tra nếu Gemini mở đầu câu trả lời bằng tên tài liệu không liên quan
-                    # (ví dụ: "Theo thông tin trong sổ tay thuế..." khi user hỏi về tạm trú)
-                    # → coi là RAG không trả lời được → fallback web
-                    _head = rag_text[:300].lower()
-                    _doc_names_in_head = [
-                        c.document_name.lower() for c in rag_citations
-                        if c.source_type == "document" and c.document_name.lower() in _head
-                    ]
-                    _query_tokens = set(w for w in re.split(r"\s+", query.lower()) if len(w) >= 3)
-                    _doc_tokens_in_query = any(
-                        any(tok in query.lower() for tok in doc_name.split())
-                        for doc_name in _doc_names_in_head
-                    ) if _doc_names_in_head else True  # nếu không có tên doc trong câu → không ảnh hưởng
-
-                    _answer_irrelevant = (
-                        "xin chào" in _head or
-                        ("chào bạn" in _head and len(rag_text) < 500 and not any(
-                            kw in _head for kw in ["thủ tục", "đăng ký", "hồ sơ", "lệ phí", "luật", "nghị định"]
-                        ))
-                    )
-                    if _answer_irrelevant:
-                        logger.info("RAG trả lời lệch chủ đề (greeting/irrelevant); fallback web. query=%s", query)
-                        rag_text = "[[RAG_NO_ANSWER]]"
-
-                    # Lưu chunks vào cache BẤT KỂ RAG có trả lời đủ hay không.
-                    # Trước đây chỉ cache khi RAG thành công → với domain thủ tục hành chính
-                    # RAG gần như luôn fallback web → cache mãi rỗng → follow-up luôn retrieve lại từ đầu.
-                    # Chunks đã retrieve là hợp lệ, follow-up nên tái dùng để tiết kiệm latency.
-                    if session_key and effective_chunks:
-                        cache_chunks(session_key, effective_chunks)
-
-                    if _should_fallback_to_web_after_rag(query, rag_text):
-                        logger.info(
-                            "RAG did not answer sufficiently; fallback to web search for query=%s",
-                            query,
-                        )
-
-                        response_mode = AnswerMode.AI
-                        total_no_answer = _rag_answer_is_total_no_answer(rag_text)
-                        yield _sse(StreamEvent("mode", response_mode.value if total_no_answer else "ai_rag"))
-
-                        fallback_support_chunks = [] if total_no_answer else effective_chunks
-                        # Nếu RAG hoàn toàn không trả lời được → web-only, không hiển thị tài liệu nội bộ.
-                        # Nếu RAG trả lời được một phần nhưng còn thiếu → dùng AI + RAG + web.
-                        async for event in self._stream_ai(
-                            query=query,
-                            history=history,
-                            support_chunks=fallback_support_chunks,
-                            image_part=image_part,
-                            force_web=True,
-                            emit_support_citations=not total_no_answer,
-                            web_search_query=web_search_query,
-                        ):
-                            if event.type == "token":
-                                full_text += str(event.data)
-                                yield _sse(event)
-                            elif event.type == "citations":
-                                citations = _merge_citations(
-                                    citations,
-                                    [_coerce_citation(c) for c in event.data],
-                                )
-                            elif event.type == "usage":
-                                ai_total = (event.data or {}).get('total', 0)
-                                if ai_total:
-                                    tokens_used = ai_total
-                    elif force_web:
-                        # Câu hỏi cần cập nhật/kiểm chứng nhưng RAG có căn cứ: dùng cả RAG + web.
-                        response_mode = AnswerMode.AI
-                        yield _sse(StreamEvent("mode", "ai_rag"))
-
-                        async for event in self._stream_ai(
-                            query=query,
-                            history=history,
-                            support_chunks=effective_chunks,
-                            image_part=image_part,
-                            force_web=True,
-                            emit_support_citations=True,
-                            web_search_query=web_search_query,
-                        ):
-                            if event.type == "token":
-                                full_text += str(event.data)
-                                yield _sse(event)
-                            elif event.type == "citations":
-                                citations = _merge_citations(
-                                    citations,
-                                    [_coerce_citation(c) for c in event.data],
-                                )
                     else:
-                        response_mode = AnswerMode.RAG
-                        # Chỉ giữ citations của tài liệu Gemini thực sự đề cập
-                        rag_citations = _filter_rag_citations_by_usage(rag_text, rag_citations, [])
-                        citations = _merge_citations(citations, rag_citations)
-                        yield _sse(StreamEvent("mode", response_mode.value))
+                        # ─── PATH MỚI: stream trực tiếp với peek-buffer ───
+                        rag_text = ""
+                        rag_citations: list[Citation] = []
+                        _rag_no_answer = False
+                        _rag_streaming_started = False
 
-                        async for event in _stream_static_text(rag_text):
-                            full_text += str(event.data)
-                            yield _sse(event)
+                        async for _peek_event in self._stream_rag_answer_with_peek(
+                            query=query,
+                            chunks=effective_chunks,
+                            history=history,
+                            session_summary=get_session_summary(session_key) if session_key else None,
+                        ):
+                            if _peek_event.type == "rag_no_answer":
+                                _rag_no_answer = True
+                                break
+
+                            elif _peek_event.type == "citations":
+                                rag_citations = [
+                                    _coerce_citation(c) for c in (_peek_event.data or [])
+                                ]
+
+                            elif _peek_event.type == "token":
+                                _tok = str(_peek_event.data or "")
+                                if _tok:
+                                    if not _rag_streaming_started:
+                                        # Ký tự đầu tiên thực sự → phát mode + citations
+                                        _rag_streaming_started = True
+                                        response_mode = AnswerMode.RAG
+                                        citations = _merge_citations(citations, rag_citations)
+                                        yield _sse(StreamEvent("mode", response_mode.value))
+                                    rag_text += _tok
+                                    full_text += _tok
+                                    yield _sse(_peek_event)
+
+                            elif _peek_event.type == "rag_text_done":
+                                # full text để post-processing (citation filter v.v.)
+                                rag_text = str(_peek_event.data or rag_text)
+
+                            elif _peek_event.type == "usage":
+                                _u = _peek_event.data or {}
+                                if isinstance(_u, dict) and _u.get("total"):
+                                    tokens_used = _u["total"]
+
+                        if _rag_no_answer:
+                            rag_text = "[[RAG_NO_ANSWER]]"
+                        else:
+                            # ─── Post-processing sau khi đã stream xong ───
+                            rag_text = _clean_response_text(rag_text, rag_citations)
+
+                            # Lọc citations chỉ giữ tài liệu Gemini thực sự đề cập
+                            rag_citations = _filter_rag_citations_by_usage(rag_text, rag_citations, [])
+                            citations = _merge_citations([], rag_citations)
+
+                            # Emit lại citations đã lọc để frontend cập nhật panel nguồn
+                            if rag_citations:
+                                yield _sse(StreamEvent("citations", [
+                                    c.__dict__ if hasattr(c, "__dict__") else c
+                                    for c in rag_citations
+                                ]))
+
+                            if session_key and effective_chunks:
+                                cache_chunks(session_key, effective_chunks)
+
+                            _rag_direct_streamed = True  # đánh dấu đã stream xong, bỏ qua if/elif/else bên dưới
+
+                    # ─── Phần cũ: xử lý fallback/force_web (chỉ chạy khi CHƯA stream trực tiếp) ───
+                    if not _rag_direct_streamed:
+                        rag_text = _clean_response_text(rag_text, rag_citations)
+
+                        _head = rag_text[:300].lower()
+                        _doc_names_in_head = [
+                            c.document_name.lower() for c in rag_citations
+                            if c.source_type == "document" and c.document_name.lower() in _head
+                        ]
+                        _query_tokens = set(w for w in re.split(r"\s+", query.lower()) if len(w) >= 3)
+                        _doc_tokens_in_query = any(
+                            any(tok in query.lower() for tok in doc_name.split())
+                            for doc_name in _doc_names_in_head
+                        ) if _doc_names_in_head else True
+
+                        _answer_irrelevant = (
+                            "xin chào" in _head or
+                            ("chào bạn" in _head and len(rag_text) < 500 and not any(
+                                kw in _head for kw in ["thủ tục", "đăng ký", "hồ sơ", "lệ phí", "luật", "nghị định"]
+                            ))
+                        )
+                        if _answer_irrelevant:
+                            logger.info("RAG trả lời lệch chủ đề; fallback web. query=%s", query)
+                            rag_text = "[[RAG_NO_ANSWER]]"
+
+                        if session_key and effective_chunks:
+                            cache_chunks(session_key, effective_chunks)
+
+                        if _should_fallback_to_web_after_rag(query, rag_text):
+                            logger.info(
+                                "RAG did not answer sufficiently; fallback to web search for query=%s",
+                                query,
+                            )
+
+                            response_mode = AnswerMode.AI
+                            total_no_answer = _rag_answer_is_total_no_answer(rag_text)
+                            yield _sse(StreamEvent("mode", response_mode.value if total_no_answer else "ai_rag"))
+
+                            fallback_support_chunks = [] if total_no_answer else effective_chunks
+                            async for event in self._stream_ai(
+                                query=query,
+                                history=history,
+                                support_chunks=fallback_support_chunks,
+                                image_part=image_part,
+                                force_web=True,
+                                emit_support_citations=not total_no_answer,
+                                web_search_query=web_search_query,
+                            ):
+                                if event.type == "token":
+                                    full_text += str(event.data)
+                                    yield _sse(event)
+                                elif event.type == "citations":
+                                    citations = _merge_citations(
+                                        citations,
+                                        [_coerce_citation(c) for c in event.data],
+                                    )
+                                elif event.type == "usage":
+                                    ai_total = (event.data or {}).get('total', 0)
+                                    if ai_total:
+                                        tokens_used = ai_total
+                        elif force_web:
+                            response_mode = AnswerMode.AI
+                            yield _sse(StreamEvent("mode", "ai_rag"))
+
+                            async for event in self._stream_ai(
+                                query=query,
+                                history=history,
+                                support_chunks=effective_chunks,
+                                image_part=image_part,
+                                force_web=True,
+                                emit_support_citations=True,
+                                web_search_query=web_search_query,
+                            ):
+                                if event.type == "token":
+                                    full_text += str(event.data)
+                                    yield _sse(event)
+                                elif event.type == "citations":
+                                    citations = _merge_citations(
+                                        citations,
+                                        [_coerce_citation(c) for c in event.data],
+                                    )
+                        else:
+                            response_mode = AnswerMode.RAG
+                            rag_citations = _filter_rag_citations_by_usage(rag_text, rag_citations, [])
+                            citations = _merge_citations(citations, rag_citations)
+                            yield _sse(StreamEvent("mode", response_mode.value))
+
+                            async for event in _stream_static_text(rag_text):
+                                full_text += str(event.data)
+                                yield _sse(event)
 
                 else:
                     response_mode = AnswerMode.AI
@@ -2177,6 +2246,126 @@ class ChatEngine:
         async for text in _gemini_stream_in_thread(chat_factory, prompt_parts):
             if text and not text.startswith("__usage__:"):
                 yield StreamEvent("token", text)
+
+    async def _stream_rag_answer_with_peek(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        history: list[Message],
+        session_summary: Optional[str] = None,
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """
+        FIX PERFORMANCE: Stream RAG trực tiếp tới client với peek-buffer 280 ký tự đầu.
+
+        Thay vì buffer toàn bộ phản hồi Gemini rồi mới re-stream (khiến user đợi
+        3-8s trước khi thấy ký tự đầu tiên), method này:
+          1. Buffer 280 ký tự đầu để kiểm tra [[RAG_NO_ANSWER]] và các dấu hiệu lệch chủ đề.
+          2. Nếu phát hiện no-answer → yield StreamEvent("rag_no_answer", "") để caller fallback web.
+          3. Nếu có nội dung thực → yield citations rồi stream token ngay từ ký tự đầu.
+          4. Sau khi stream xong → yield StreamEvent("rag_text_done", full_text) để caller
+             dùng cho citation filtering và các post-processing khác.
+
+        Yields:
+          StreamEvent("rag_no_answer", "")          — khi [[RAG_NO_ANSWER]] được phát hiện
+          StreamEvent("citations", citations)        — citations trước khi bắt đầu stream token
+          StreamEvent("token", text)                 — từng mảnh token thực tế
+          StreamEvent("rag_text_done", full_text)    — toàn bộ text khi xong (để post-process)
+          StreamEvent("usage", {...})                — thống kê token
+        """
+        context, citations = _build_rag_context(chunks)
+
+        summary_section = ""
+        if session_summary:
+            summary_section = (
+                f"\n\n## Tóm tắt ngữ cảnh phiên hội thoại\n{session_summary}\n"
+                "(Dùng ngữ cảnh trên để hiểu câu hỏi follow-up, không cần lặp lại.)\n"
+            )
+
+        full_prompt = _build_rag_prompt(
+            context=context,
+            query=query,
+            domain_instructions=_domain_instructions(query, rag=True),
+        ) + summary_section
+
+        gemini_history = _build_history(history)
+
+        def chat_factory():
+            return self._make_model().start_chat(history=gemini_history)
+
+        PEEK_SIZE = 280  # ký tự buffer trước khi quyết định stream hay fallback
+        peek_buf: list[str] = []
+        peek_len = 0
+        peek_committed = False   # True khi đã xác nhận có nội dung thực và bắt đầu stream
+        full_parts: list[str] = []
+
+        async for text in _gemini_stream_in_thread(chat_factory, full_prompt):
+            # Usage metadata — forward ngay
+            if text and text.startswith("__usage__:"):
+                try:
+                    yield StreamEvent("usage", json.loads(text[len("__usage__:"):]))
+                except Exception:
+                    pass
+                continue
+
+            if not text:
+                continue
+
+            full_parts.append(text)
+
+            if not peek_committed:
+                peek_buf.append(text)
+                peek_len += len(text)
+
+                if peek_len >= PEEK_SIZE:
+                    peek_committed = True
+                    peeked = "".join(peek_buf)
+                    peeked_lower = peeked.lower().strip()
+
+                    # Kiểm tra no-answer và lệch chủ đề trong 280 ký tự đầu
+                    is_no_answer = (
+                        "[[rag_no_answer]]" in peeked_lower
+                        or (
+                            "xin chào" in peeked_lower
+                            and peek_len < 500
+                            and not any(kw in peeked_lower for kw in ["thủ tục", "đăng ký", "hồ sơ", "lệ phí"])
+                        )
+                    )
+                    if is_no_answer:
+                        yield StreamEvent("rag_no_answer", "")
+                        return
+
+                    # Xác nhận có nội dung thực → gửi citations rồi bắt đầu stream
+                    yield StreamEvent("citations", citations)
+                    for t in peek_buf:
+                        if t:
+                            yield StreamEvent("token", t)
+                    peek_buf.clear()
+            else:
+                yield StreamEvent("token", text)
+
+        # Stream kết thúc trước khi đủ PEEK_SIZE (phản hồi ngắn)
+        if not peek_committed:
+            peeked = "".join(peek_buf)
+            peeked_lower = peeked.lower().strip()
+            is_no_answer = (
+                "[[rag_no_answer]]" in peeked_lower
+                or not peeked_lower  # phản hồi rỗng
+                or (
+                    "xin chào" in peeked_lower
+                    and len(peeked) < 500
+                    and not any(kw in peeked_lower for kw in ["thủ tục", "đăng ký", "hồ sơ", "lệ phí"])
+                )
+            )
+            if is_no_answer:
+                yield StreamEvent("rag_no_answer", "")
+                return
+            yield StreamEvent("citations", citations)
+            for t in peek_buf:
+                if t:
+                    yield StreamEvent("token", t)
+
+        # Yield full text để caller dùng cho post-processing (citation filter v.v.)
+        yield StreamEvent("rag_text_done", "".join(full_parts))
 
     async def _generate_rag_answer(
         self,

@@ -1898,8 +1898,7 @@ class ChatEngine:
                             # Emit lại citations đã lọc để frontend cập nhật panel nguồn
                             if rag_citations:
                                 yield _sse(StreamEvent("citations", [
-                                    c.__dict__ if hasattr(c, "__dict__") else c
-                                    for c in rag_citations
+                                    asdict(c) for c in rag_citations
                                 ]))
 
                             if session_key and effective_chunks:

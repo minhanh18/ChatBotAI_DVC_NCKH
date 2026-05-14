@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     GEMINI_LITE_MODEL: str = "gemini-2.5-flash"
 
     GEMINI_TEMPERATURE: float = 0.3
-    GEMINI_MAX_OUTPUT_TOKENS: int = 4096
+    GEMINI_MAX_OUTPUT_TOKENS: int = 8192
     GEMINI_TOP_P: float = 0.8
 
     # Thinking budget cho Flash (sinh phản hồi)

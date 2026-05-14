@@ -687,6 +687,15 @@ export function MessageBubble({
   const [ttsProgress, setTtsProgress] = useState(0);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const didAutoOpenSources = useRef(false);
+
+  // Tự động mở panel nguồn khi citations có dữ liệu và stream đã xong
+  useEffect(() => {
+    if (!isStreaming && citations.length > 0 && !didAutoOpenSources.current) {
+      didAutoOpenSources.current = true;
+      setSourcesOpen(true);
+    }
+  }, [isStreaming, citations.length]);
   const [inlinePdfModal, setInlinePdfModal] = useState<{
     url: string;
     title: string;

@@ -2454,6 +2454,7 @@ class ChatEngine:
         web_search_query: Optional[str] = None,
         session_key: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
+        from app.chat.session_cache import cache_web_results, get_cached_web_results
         system_prompt = _build_ai_prompt(domain_instructions=_domain_instructions(query, rag=False), query=query)
 
         support_chunks = support_chunks or []

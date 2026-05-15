@@ -298,7 +298,9 @@ export function ChatWindow({
       const gap = embedded ? 10 : 12;
       const vpRect = viewport.getBoundingClientRect();
       // Bỏ qua nếu viewport có kích thước 0 (iframe chưa visible — thu nhỏ lần đầu)
-      if (vpRect.width === 0 || vpRect.height === 0) {
+      // Trong popup/iframe dùng document.documentElement.clientHeight để check thực tế
+      const effectiveHeight = vpRect.height > 0 ? vpRect.height : document.documentElement.clientHeight;
+      if (vpRect.width === 0 || effectiveHeight === 0) {
         if (attemptsLeft > 0) {
           window.setTimeout(() => attemptScroll(attemptsLeft - 1), 80);
         } else {

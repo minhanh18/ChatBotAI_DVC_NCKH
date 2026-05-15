@@ -689,6 +689,12 @@ export function MessageBubble({
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const didAutoOpenSources = useRef(false);
 
+  // Reset khi message thay đổi (ví dụ streaming bubble → DB bubble sau onDone)
+  useEffect(() => {
+    didAutoOpenSources.current = false;
+    setSourcesOpen(false);
+  }, [message.id]);
+
   // Tự động mở panel nguồn khi citations có dữ liệu và stream đã xong
   useEffect(() => {
     if (!isStreaming && citations.length > 0 && !didAutoOpenSources.current) {

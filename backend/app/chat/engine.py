@@ -241,9 +241,6 @@ def _build_rag_prompt(context: str, query: str, domain_instructions: str) -> str
 ### Quy tắc sử dụng tài liệu
 - Chỉ trả lời dựa trên ngữ cảnh tài liệu được cung cấp bên dưới. Không bịa thêm.
 - Nếu không tìm thấy thông tin trong ngữ cảnh, trả về đúng chuỗi [[RAG_NO_ANSWER]] và không viết gì thêm.
-- **Xác định rõ phạm vi câu hỏi trước khi trả lời:**
-  - Người dùng hỏi **toàn bộ thủ tục** → **Giữ NGUYÊN VẸN tất cả các bước** có trong tài liệu, không bỏ sót bước nào.
-  - Người dùng hỏi **riêng một khía cạnh** (chỉ hỏi lệ phí, chỉ hỏi hồ sơ, chỉ hỏi thời gian, chỉ hỏi điều kiện...) → **CHỈ trả lời đúng khía cạnh đó**, KHÔNG liệt kê thêm các mục khác (không thêm trình tự thực hiện, không thêm căn cứ pháp lý dài, không thêm lưu ý không liên quan). Nếu hỏi hồ sơ thì chỉ liệt kê hồ sơ. Nếu hỏi lệ phí thì chỉ nêu lệ phí.
 - **Giữ NGUYÊN các đường link** trong tài liệu, đặt link đúng tại bước tương ứng.
 - Không lặp lại tên tài liệu trong nội dung trả lời (tên đã hiển thị ở khu vực Tham khảo thêm).
 - Không dùng đuôi .pdf trong tên tài liệu. Không mở đầu câu trả lời bằng tên tài liệu (ví dụ: "Theo thông tin trong [tên tài liệu]...") — tên tài liệu đã hiển thị tự động ở khu vực Tham khảo thêm.
@@ -294,19 +291,7 @@ Mỗi đoạn trong ngữ cảnh được gắn nhãn [Tài liệu N] — N là 
 
 def _build_ai_prompt(domain_instructions: str, query: str = "") -> str:
     """Xây dựng system prompt cho chế độ AI (web/kiến thức tổng hợp)."""
-    focused_constraint = ""
-    if query and is_focused_aspect_query(query):
-        focused_constraint = """
-## ⚠️ Câu hỏi về một khía cạnh cụ thể
-Người dùng chỉ hỏi về **một khía cạnh cụ thể** (hồ sơ / lệ phí / thời gian / điều kiện / nơi nộp...).
-- **CHỈ trả lời đúng khía cạnh đó**, KHÔNG liệt kê thêm trình tự các bước, không thêm căn cứ pháp lý dài, không thêm lưu ý không liên quan.
-- Nếu người dùng hỏi **hồ sơ / giấy tờ**: chỉ liệt kê danh sách giấy tờ/tài liệu cần chuẩn bị.
-- Nếu người dùng hỏi **lệ phí**: chỉ nêu mức phí (đầy đủ các mức theo hình thức nộp).
-- Nếu người dùng hỏi **thời gian**: chỉ nêu thời hạn giải quyết.
-- Tuyệt đối không tự mở rộng sang các mục khác như trình tự thực hiện, căn cứ pháp lý hay lưu ý trừ khi được hỏi.
-"""
-
-    return f"""{_get_identity()}{focused_constraint}
+    return f"""{_get_identity()}
 
 ## Khi trả lời từ kiến thức tổng hợp
 
@@ -379,27 +364,10 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             else "- Ưu tiên các đoạn ngữ cảnh có nêu rõ Điều, Khoản, điểm, tên luật/nghị định/thông tư hoặc hiệu lực văn bản.\n"
         )
         guidance = (
-            "- Nếu đây là câu hỏi thủ tục hành chính, trình bày theo cấu trúc các mục sau (theo đúng thứ tự):\n"
-            "  1. Sơ lược thông tin liên quan\n"
-            "  2. Điều kiện / đối tượng áp dụng (nếu có)\n"
-            "  3. Hồ sơ cần chuẩn bị\n"
-            "  4. Nơi nộp\n"
-            "  5. Trình tự các bước thực hiện — bước đầu tiên truy cập Cổng DVCQG PHẢI dùng link: "
-            "[Cổng Dịch vụ công Quốc gia](https://dichvucong.gov.vn/p/home/dvc-trang-chu.html). "
-            "TUYỆT ĐỐI KHÔNG dùng URL làm label — không được viết [https://...](https://...). "
-            "Luôn dùng tên mô tả ngắn gọn làm label, ví dụ: [Cổng Dịch vụ công Quốc gia](...), [Truy cập trực tiếp thủ tục](...). "
-            "Nếu nguồn web/tài liệu có URL cụ thể đến thủ tục → dùng NGUYÊN VẸN URL đó, KHÔNG tự điền hay sửa. "
+            "- Nếu nguồn web/tài liệu có URL cụ thể đến thủ tục → dùng NGUYÊN VẸN URL đó, KHÔNG tự điền hay sửa. "
             "TUYỆT ĐỐI KHÔNG tự tạo URL dạng 'ma_thu_tuc=...' hay bất kỳ URL nào không có trong nguồn. "
             "Nếu không có URL cụ thể trong nguồn → chỉ dẫn: 'Bạn có thể gõ [tên thủ tục] vào ô tìm kiếm tại Cổng Dịch vụ công Quốc gia.'. "
             "Không đặt link đăng nhập/đăng ký vào phần này.\n"
-            "  6. Lưu ý\n"
-            "  7. Căn cứ pháp lý — đặt ở GẦN CUỐI, sau phần Lưu ý, không đặt ở đầu hoặc giữa câu trả lời.\n"
-            "  8. Nếu hợp lý, kết thúc bằng gợi ý tự nhiên những bước tiếp theo, viết liền mạch không cần tiêu đề riêng, "
-            "ví dụ: 'Bạn có thể tiến hành trước bằng cách...', 'Nếu chưa có CCCD, bạn nên...' v.v."
-            # Chỉ inject 8 mục đầy đủ khi user hỏi TOÀN BỘ thủ tục,
-            # KHÔNG inject khi user chỉ hỏi 1 khía cạnh (hồ sơ/lệ phí/thời gian...)
-            if is_procedure_query(query) and not is_focused_aspect_query(query)
-            else ""
         )
         return (
             "### Khi câu hỏi thuộc lĩnh vực pháp lý / thủ tục hành chính\n"

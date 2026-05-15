@@ -63,6 +63,8 @@ class SessionState:
     turn_count: int = 0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    # Cache kết quả web search theo topic — tránh gọi lại Tavily cho follow-up cùng chủ đề
+    web_results: dict = field(default_factory=dict)  # topic_key → {context, citations, cached_at}
 
 
 # ── In-memory store ───────────────────────────────────────────────────────────
@@ -98,6 +100,7 @@ def _get_state(session_key: str) -> SessionState | None:
         turn_count=raw.get("turn_count", 0),
         created_at=raw.get("created_at", _now()),
         updated_at=raw.get("updated_at", _now()),
+        web_results=raw.get("web_results", {}),
     )
 
 
@@ -111,6 +114,7 @@ def _save_state(state: SessionState) -> None:
         "turn_count": state.turn_count,
         "created_at": state.created_at,
         "updated_at": state.updated_at,
+        "web_results": state.web_results,
     }
 
 
@@ -268,3 +272,54 @@ def gc_expired_sessions() -> int:
     if expired:
         logger.info("GC: removed %d expired sessions", len(expired))
     return len(expired)
+
+
+_WEB_CACHE_TTL_SEC = 600  # Web results cache tồn tại 10 phút trong session
+
+
+def _topic_key(query: str) -> str:
+    """Trích topic key từ query — dùng để lookup web cache theo chủ đề."""
+    import re
+    # Nếu query có prefix "Chủ đề hiện tại: X. Câu hỏi: Y" → dùng X làm key
+    m = re.match(r'^Chủ đề hiện tại:\s*([^.]+)\.', query.strip(), re.IGNORECASE)
+    if m:
+        return m.group(1).strip().lower()
+    # Fallback: dùng 4 từ đầu của query
+    words = query.strip().lower().split()
+    return " ".join(words[:4])
+
+
+def cache_web_results(session_key: str, query: str, web_context: str, web_citations: list) -> None:
+    """Cache kết quả web search cho topic của query. Dùng lại cho follow-up cùng chủ đề."""
+    if not session_key or not web_context:
+        return
+    state = _get_state(session_key) or _init_state(session_key)
+    key = _topic_key(query)
+    state.web_results[key] = {
+        "context": web_context,
+        "citations": web_citations,
+        "cached_at": _now(),
+    }
+    # Giữ tối đa 5 topic khác nhau trong session
+    if len(state.web_results) > 5:
+        oldest = min(state.web_results, key=lambda k: state.web_results[k].get("cached_at", 0))
+        del state.web_results[oldest]
+    _save_state(state)
+
+
+def get_cached_web_results(session_key: str, query: str) -> tuple[str, list] | None:
+    """Lấy web results đã cache cho topic. Trả về (context, citations) hoặc None nếu miss/hết hạn."""
+    if not session_key:
+        return None
+    state = _get_state(session_key)
+    if not state:
+        return None
+    key = _topic_key(query)
+    cached = state.web_results.get(key)
+    if not cached:
+        return None
+    if _now() - cached.get("cached_at", 0) > _WEB_CACHE_TTL_SEC:
+        del state.web_results[key]
+        _save_state(state)
+        return None
+    return cached["context"], cached["citations"]

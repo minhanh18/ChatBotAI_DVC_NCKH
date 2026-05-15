@@ -153,6 +153,8 @@ export function ChatWindow({
   const headerRef = useRef<HTMLDivElement>(null);
   const pendingAssistantTopRef = useRef(false);
   const autoScrolledForCurrentReplyRef = useRef(false);
+  // Sau khi scroll lên đầu reply xong, block scrollToBottom trong thời gian ngắn để tránh giật xuống
+  const blockedScrollUntilRef = useRef<number>(0);
 
   const botAvatar = USER_BOT_AVATAR;
   const appTitle = 'Trợ lý hỗ trợ công dân';
@@ -247,6 +249,7 @@ export function ChatWindow({
 
   useEffect(() => {
     if (pendingAssistantTopRef.current) return;
+    if (Date.now() < blockedScrollUntilRef.current) return;
     scrollToBottom(stream.active ? 'smooth' : 'auto');
   }, [messages, pendingUserText, stream, scrollToBottom]);
 
@@ -313,6 +316,7 @@ export function ChatWindow({
       const elTopRelativeToVp = elRect.top - vpRect.top;
       const targetTop = Math.max(0, currentScrollTop + elTopRelativeToVp - headerHeight - gap);
       viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+      blockedScrollUntilRef.current = Date.now() + 1200; // block scrollToBottom 1.2s sau khi scroll lên
       pendingAssistantTopRef.current = false;
     };
 

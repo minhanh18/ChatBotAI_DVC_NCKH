@@ -686,16 +686,18 @@ export function MessageBubble({
 
   const [ttsProgress, setTtsProgress] = useState(0);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const didAutoOpenSources = useRef(false);
+  // Khởi tạo đúng ngay khi mount: nếu message đã có citations (load từ DB) → mở panel ngay
+  const [sourcesOpen, setSourcesOpen] = useState(() => !isStreaming && citations.length > 0);
+  const didAutoOpenSources = useRef(!isStreaming && citations.length > 0);
 
-  // Reset khi message thay đổi (ví dụ streaming bubble → DB bubble sau onDone)
+  // Reset khi message thay đổi (streaming bubble → DB bubble sau onDone)
   useEffect(() => {
-    didAutoOpenSources.current = false;
-    setSourcesOpen(false);
-  }, [message.id]);
+    const shouldOpen = !isStreaming && citations.length > 0;
+    didAutoOpenSources.current = shouldOpen;
+    setSourcesOpen(shouldOpen);
+  }, [message.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tự động mở panel nguồn khi citations có dữ liệu và stream đã xong
+  // Tự động mở panel khi citations xuất hiện sau stream
   useEffect(() => {
     if (!isStreaming && citations.length > 0 && !didAutoOpenSources.current) {
       didAutoOpenSources.current = true;

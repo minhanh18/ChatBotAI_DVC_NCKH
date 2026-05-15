@@ -227,6 +227,7 @@ def _common_format_rules() -> str:
 ## Quy tắc trích dẫn điều khoản pháp luật
 - Nếu câu trả lời có căn cứ từ luật/nghị định/thông tư, hãy trích nguyên văn điều/khoản đó bằng blockquote (>).
 - Chỉ trích điều khoản pháp luật thực sự — không blockquote hướng dẫn thực tế, ví dụ, hay câu diễn giải.
+- **QUAN TRỌNG — Tránh lặp nội dung:** Nếu câu dẫn trước blockquote đã nêu nội dung (ví dụ "hồ sơ bao gồm:"), thì blockquote chỉ trích phần nội dung cụ thể bên trong (a), b), c)...), KHÔNG lặp lại câu mở đầu "Hồ sơ đăng ký tạm trú bao gồm:" trong blockquote. Bắt đầu thẳng vào a), b) hoặc nội dung chi tiết.
 - Sau blockquote: diễn giải ngắn gọn bằng ngôn ngữ dễ hiểu, không lặp lại nội dung vừa trích.
 - Khi trích dẫn có nhiều khoản/điểm (1., 2., a), b) ...) hoặc gạch đầu dòng: **mỗi mục phải xuống dòng riêng**, không gộp thành một đoạn liên tục.
 - Không chèn link/số nguồn tham khảo kiểu [1](url) trong thân câu trả lời; nguồn sẽ hiển thị ở khu vực Tham khảo thêm. Chỉ giữ link thao tác trực tiếp như biểu mẫu hoặc cổng nộp hồ sơ nếu URL xuất hiện rõ trong tài liệu/web context."""
@@ -612,6 +613,14 @@ def _remove_redundant_legal_basis_section(text: str) -> str:
 
 def _replace_pdf_suffixes(text: str) -> str:
     return re.sub(r"(?i)\.pdf\b", "", text or "").strip()
+
+
+def _topic_key_for_log(query: str) -> str:
+    """Trích topic key ngắn từ query để dùng trong log."""
+    m = re.match(r'^Chủ đề hiện tại:\s*([^.]+)\.', query.strip(), re.IGNORECASE)
+    if m:
+        return m.group(1).strip()[:40]
+    return query.strip()[:40]
 
 
 def _linkify_raw_urls(text: str) -> str:
@@ -1709,6 +1718,7 @@ class ChatEngine:
         from app.chat.session_cache import (
             cache_chunks, get_cached_chunks, maybe_update_summary,
             get_session_summary,
+            cache_web_results, get_cached_web_results,
             _SUMMARY_EVERY_N_TURNS as SUMMARY_EVERY_N_TURNS,
         )
 
@@ -1933,6 +1943,7 @@ class ChatEngine:
                                 force_web=True,
                                 emit_support_citations=not total_no_answer,
                                 web_search_query=web_search_query,
+                                session_key=session_key,
                             ):
                                 if event.type == "token":
                                     full_text += str(event.data)
@@ -1958,6 +1969,7 @@ class ChatEngine:
                                 force_web=True,
                                 emit_support_citations=True,
                                 web_search_query=web_search_query,
+                                session_key=session_key,
                             ):
                                 if event.type == "token":
                                     full_text += str(event.data)
@@ -2003,6 +2015,7 @@ class ChatEngine:
                         support_chunks=support_chunks,
                         image_part=image_part,
                         force_web=force_web,
+                        session_key=session_key,
                     ):
                         if event.type == "token":
                             full_text += str(event.data)
@@ -2439,6 +2452,7 @@ class ChatEngine:
         force_web: bool = False,
         emit_support_citations: bool = True,
         web_search_query: Optional[str] = None,
+        session_key: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         system_prompt = _build_ai_prompt(domain_instructions=_domain_instructions(query, rag=False), query=query)
 
@@ -2447,9 +2461,12 @@ class ChatEngine:
         # Dùng web_search_query (đã bỏ prefix chủ đề) cho Tavily để không lệch chủ đề
         _tavily_query = web_search_query or query
 
+        # ── Web cache lookup — tránh gọi lại Tavily cho follow-up cùng chủ đề ──
+        _cached_web = get_cached_web_results(session_key, query) if session_key else None
+
         # Khởi động web fetch sớm (song song) nếu cần, để không phải đợi tuần tự
         web_fetch_task: asyncio.Task | None = None
-        if force_web or should_search_web(_tavily_query):
+        if _cached_web is None and (force_web or should_search_web(_tavily_query)):
             web_fetch_task = asyncio.create_task(maybe_fetch_web_context(_tavily_query, force=force_web))
 
         if support_chunks:
@@ -2466,9 +2483,15 @@ class ChatEngine:
                 yield StreamEvent("citations", rag_citations)
 
         # Await kết quả web fetch (đã chạy song song trong lúc build RAG context)
-        if web_fetch_task is not None:
+        if _cached_web is not None:
+            web_context, web_citations = _cached_web
+            logger.info("Web cache HIT for session=%s query_topic=%s", session_key, _topic_key_for_log(query))
+        elif web_fetch_task is not None:
             try:
                 web_context, web_citations = await web_fetch_task
+                # Lưu vào cache cho follow-up
+                if session_key and web_context:
+                    cache_web_results(session_key, query, web_context, web_citations)
             except Exception as exc:
                 logger.warning("Web fetch task failed: %s", exc)
                 web_context, web_citations = "", []

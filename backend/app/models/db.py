@@ -12,26 +12,28 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
 # ── Engine ────────────────────────────────────────────────────────────────────
-# Render Postgres free tier đóng idle connection sau ~240s (4 phút).
-# pool_recycle=180 đảm bảo connection bị recycle trước khi server đóng.
-# connect_args với ssl="require" + statement_timeout tránh connection treo.
+# DATABASE_URL trỏ tới Supabase PgBouncer pooler (transaction mode).
+# Trong transaction mode, PgBouncer tái gán backend connection liên tục —
+# SQLAlchemy pool nội bộ sẽ giữ asyncpg connection và cache named prepared
+# statements (vd: __asyncpg_stmt_11__). Khi PgBouncer tái dùng cùng một
+# PostgreSQL backend cho asyncpg connection khác, prepared statement vẫn còn
+# tồn tại → DuplicatePreparedStatementError.
+#
+# Fix: dùng NullPool — SQLAlchemy tạo/đóng connection mới cho mỗi request,
+# PgBouncer tự lo pool phía backend. Không cần pool_size/max_overflow nữa.
 engine = create_async_engine(
     settings.DATABASE_URL,
-    pool_size=5,             
-    max_overflow=2,          
-    pool_recycle=180,
-    pool_pre_ping=True,
-    pool_timeout=30,      
+    poolclass=NullPool,
     echo=settings.DEBUG,
-    # KHÔNG ĐỂ statement_cache_size Ở ĐÂY NỮA
     connect_args={
         "ssl": "require",
-        "prepared_statement_cache_size": 0,
-        "statement_cache_size": 0,
+        "statement_cache_size": 0,       # tắt asyncpg prepared statement cache
+        "prepared_statement_cache_size": 0,  # tắt SQLAlchemy prepared statement cache
         "server_settings": {
             "statement_timeout": "30000",
             "idle_in_transaction_session_timeout": "60000",

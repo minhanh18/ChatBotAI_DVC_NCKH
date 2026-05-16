@@ -1198,30 +1198,48 @@ def _is_action_link_label(label: str) -> bool:
 def _guard_untrusted_action_links(text: str, citations: list[Citation] | None = None) -> str:
     """Không cho LLM tự bịa link thao tác/hồ sơ.
 
-    Chỉ giữ action link nếu URL có trong citations. Nếu chưa có nguồn URL rõ ràng,
-    chuyển link thành text thường để tránh dẫn người dân vào link sai.
+    Chỉ giữ action link nếu URL có trong citations hoặc thuộc domain tin cậy.
+    Nếu chưa có nguồn URL rõ ràng, chuyển link thành text thường để tránh dẫn người dân vào link sai.
     """
     if not text:
         return text
     allowed = _allowed_urls_from_citations(citations)
     if not allowed:
-        # Nếu không có citations URL, vẫn cho phép link văn bản đã xuất hiện dưới dạng URL thật trong text,
-        # nhưng action link do model bịa sẽ bị bỏ.
         allowed = set()
+
+    # Domain tin cậy luôn được phép — không cần phải có trong citations
+    _TRUSTED_DOMAINS = (
+        'dichvucong.gov.vn',
+        'dichvucong.bocongan.gov.vn',
+        'dangkykinhdoanh.gov.vn',
+        'dancuquocgia.gov.vn',
+        'thuvienphapluat.vn',
+        'luatvietnam.vn',
+        'chinhphu.vn',
+        'bocongan.gov.vn',
+        'moj.gov.vn',
+        'danang.gov.vn',
+        'egov.danang.gov.vn',
+    )
 
     def repl(match: re.Match[str]) -> str:
         label = match.group(1).strip()
         url = match.group(2).strip()
         if not _is_action_link_label(label):
             return match.group(0)
-        # So sánh cả dạng có và không có trailing slash
         url_norm = url.rstrip('/')
         if url in allowed or url_norm in allowed or (url_norm + '/') in allowed:
             return match.group(0)
-        # Cho phép link nội bộ /api/documents vì do hệ thống tạo, không phải model bịa.
         if url.startswith('/api/documents/'):
             return match.group(0)
-        # URL không tin cậy: chỉ giữ tên hiển thị, không hiện thông báo lỗi
+        # Cho phép nếu URL thuộc trusted domain
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc.lower().lstrip('www.')
+            if any(domain == d or domain.endswith('.' + d) for d in _TRUSTED_DOMAINS):
+                return match.group(0)
+        except Exception:
+            pass
         return label
 
     return re.sub(r'\[([^\]]+)\]\((https?://[^\)]+|/api/documents/[^\)]+)\)', repl, text)

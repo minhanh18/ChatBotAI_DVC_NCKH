@@ -193,11 +193,14 @@ export function ChatWindow({
     }
   }, [scrollToBottom]);
 
-  const loadConversations = useCallback(async () => {
+  const loadConversations = useCallback(async (currentActiveId?: string | null) => {
     try {
       const list = await getConversations(sessionKey);
       setConversations(list);
-      if (hideHistory && !activeConvId && list[0]) {
+      // currentActiveId được truyền từ onDone để tránh stale closure: nếu conversation
+      // vừa được tạo (resolvedConvId), không gọi loadMessages lần 2 làm scroll giật xuống.
+      const effectiveActiveId = currentActiveId !== undefined ? currentActiveId : activeConvId;
+      if (hideHistory && !effectiveActiveId && list[0]) {
         setActiveConvId(list[0].id);
         await loadMessages(list[0].id);
       }
@@ -542,8 +545,9 @@ export function ChatWindow({
             setPendingUserText('');
             setPendingUserTime(null);
             setVoiceStatus('');
-            // loadConversations cập nhật sidebar, không cần await
-            loadConversations().catch(() => {});
+            // loadConversations cập nhật sidebar; truyền resolvedConvId để tránh stale closure
+            // gọi loadMessages lần 2 sau ~1-2s (gây scroll giật về đáy khi block 1.2s hết hạn).
+            loadConversations(resolvedConvId).catch(() => {});
           },
           onError: (err: string) => {
             const normalized = (err || '').toLowerCase();

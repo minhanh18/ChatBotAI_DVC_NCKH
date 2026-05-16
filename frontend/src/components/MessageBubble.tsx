@@ -686,24 +686,13 @@ export function MessageBubble({
 
   const [ttsProgress, setTtsProgress] = useState(0);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
-  // Khởi tạo đúng ngay khi mount: nếu message đã có citations (load từ DB) → mở panel ngay
-  const [sourcesOpen, setSourcesOpen] = useState(() => !isStreaming && citations.length > 0);
-  const didAutoOpenSources = useRef(!isStreaming && citations.length > 0);
+  // Panel nguồn tham khảo mặc định ĐÓNG — user phải bấm "Xem nguồn" để mở.
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
-  // Reset khi message thay đổi (streaming bubble → DB bubble sau onDone)
+  // Reset về đóng khi bubble chuyển từ streaming sang DB message (message.id thay đổi).
   useEffect(() => {
-    const shouldOpen = !isStreaming && citations.length > 0;
-    didAutoOpenSources.current = shouldOpen;
-    setSourcesOpen(shouldOpen);
+    setSourcesOpen(false);
   }, [message.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Tự động mở panel khi citations xuất hiện sau stream
-  useEffect(() => {
-    if (!isStreaming && citations.length > 0 && !didAutoOpenSources.current) {
-      didAutoOpenSources.current = true;
-      setSourcesOpen(true);
-    }
-  }, [isStreaming, citations.length]);
   const [inlinePdfModal, setInlinePdfModal] = useState<{
     url: string;
     title: string;

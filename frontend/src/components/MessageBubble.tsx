@@ -54,6 +54,8 @@ interface MessageBubbleProps {
   compact?: boolean;
   legalRefs?: LegalRef[];
   serviceLinks?: ServiceLink[];
+  /** true = message vừa nhận xong (latest), panel nguồn tự mở sau khi streaming kết thúc */
+  isNewMessage?: boolean;
 }
 
 function formatMessageTime(timestamp?: string | null) {
@@ -665,6 +667,7 @@ export function MessageBubble({
   compact = false,
   legalRefs,
   serviceLinks,
+  isNewMessage = false,
 }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isWarm = variant === 'user';
@@ -686,13 +689,18 @@ export function MessageBubble({
 
   const [ttsProgress, setTtsProgress] = useState(0);
   const [ttsSpeaking, setTtsSpeaking] = useState(false);
-  // Panel nguồn tham khảo mặc định ĐÓNG — user phải bấm "Xem nguồn" để mở.
+  // Panel nguồn tham khảo: mặc định đóng.
+  // Chỉ tự mở khi đây là message mới nhất (isNewMessage=true), streaming đã xong,
+  // và có citations. Message cũ (history) luôn để đóng.
   const [sourcesOpen, setSourcesOpen] = useState(false);
 
-  // Reset về đóng khi bubble chuyển từ streaming sang DB message (message.id thay đổi).
   useEffect(() => {
-    setSourcesOpen(false);
-  }, [message.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!isStreaming && isNewMessage && citations.length > 0) {
+      setSourcesOpen(true);   // message mới + có nguồn → mở để user thấy ngay
+    } else {
+      setSourcesOpen(false);  // history, đang stream, hoặc không có nguồn → đóng
+    }
+  }, [message.id, isNewMessage, isStreaming, citations.length]); // eslint-disable-line react-hooks/exhaustive-deps
   const [inlinePdfModal, setInlinePdfModal] = useState<{
     url: string;
     title: string;

@@ -865,6 +865,7 @@ export function ChatWindow({
                         return prevUser ? () => handleReload(prevUser.content) : undefined;
                       })()}
                       compact={compactUi}
+                      isNewMessage={message.role === 'assistant' && message.id === lastAssistantMessageId}
                     />
                   </div>
                 </React.Fragment>

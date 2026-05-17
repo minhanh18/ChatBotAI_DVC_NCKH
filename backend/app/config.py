@@ -56,7 +56,8 @@ class Settings(BaseSettings):
     GEMINI_LITE_MODEL: str = "gemini-2.5-flash"
 
     GEMINI_TEMPERATURE: float = 0.3
-    GEMINI_MAX_OUTPUT_TOKENS: int = 8192
+    GEMINI_MAX_OUTPUT_TOKENS: int = 3072   # phản hồi chính — đủ cho câu trả lời tập trung
+    GEMINI_RAG_MAX_TOKENS:    int = 1200   # RAG-lite trial — chỉ cần detect "đủ thông tin không"
     GEMINI_TOP_P: float = 0.8
 
     # Thinking budget cho Flash (sinh phản hồi)

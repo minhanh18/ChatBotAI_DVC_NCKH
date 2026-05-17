@@ -1698,10 +1698,11 @@ class ChatEngine:
             max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
             top_p=settings.GEMINI_TOP_P,
         )
-        # Config riêng cho Lite model — có thể override temperature nếu cần
+        # Lite model dùng cho RAG trial — chỉ cần detect "đủ thông tin không",
+        # max token thấp hơn để fail-fast nhanh hơn trước khi fallback web.
         self._lite_gen_config = genai.GenerationConfig(
             temperature=settings.GEMINI_TEMPERATURE,
-            max_output_tokens=settings.GEMINI_MAX_OUTPUT_TOKENS,
+            max_output_tokens=settings.GEMINI_RAG_MAX_TOKENS,
             top_p=settings.GEMINI_TOP_P,
         )
 

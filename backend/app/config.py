@@ -48,11 +48,9 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
 
     # Model chính — sinh phản hồi, truy xuất thông tin, tìm kiếm, đánh giá
-    # Dùng thinking_budget cao hơn khi gặp câu hỏi pháp lý phức tạp (set qua code)
     GEMINI_MODEL: str = "gemini-2.5-flash"
 
-    # Model nhẹ — tiền xử lý: phân tích ý định, đọc log ngữ cảnh, tóm tắt session
-    # Tốc độ tối đa, thinking_budget thấp (Minimal/Low)
+    # Model nhẹ — dùng cho chitchat và legal_enricher
     GEMINI_LITE_MODEL: str = "gemini-2.5-flash"
 
     GEMINI_TEMPERATURE: float = 0.3
@@ -142,9 +140,9 @@ class Settings(BaseSettings):
     # ── Live web search / crawl ───────────────────────────
     ENABLE_WEB_SEARCH: bool = True
     WEB_SEARCH_RESULTS_LIMIT: int = 5
-    WEB_SEARCH_FETCH_PAGES: int = 2
-    WEB_SEARCH_TIMEOUT_SEC: float = 5.0
-    WEB_SEARCH_MAX_CONTEXT_CHARS: int = 1200
+    WEB_SEARCH_FETCH_PAGES: int = 2       # 2 trang đủ cho focused answers
+    WEB_SEARCH_TIMEOUT_SEC: float = 5.5   # dichvucong.gov.vn thực tế tốn 1.8–6s; 5.0 đôi khi timeout
+    WEB_SEARCH_MAX_CONTEXT_CHARS: int = 900  # 1200 → hơi nhiều; 600 → cắt giữa hồ sơ; 900 là điểm cân bằng
 
     # ── Cloudflare R2 Storage (Thay thế hoàn toàn đoạn Azure cũ) ──
     USE_R2_STORAGE: bool = False 

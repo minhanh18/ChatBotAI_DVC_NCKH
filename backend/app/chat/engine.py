@@ -319,13 +319,13 @@ def _build_ai_prompt(domain_instructions: str, query: str = "") -> str:
 - Với câu hỏi lệ phí/tên thủ tục cụ thể → đối chiếu đúng tên thủ tục trước khi kết luận.
 
 ### ⚠️ Quy tắc phạm vi trả lời — QUAN TRỌNG
-**Chỉ trả lời ĐÚNG khía cạnh người dùng hỏi. KHÔNG tự mở rộng sang thông tin không được hỏi.**
-- Hỏi về **hồ sơ** → chỉ liệt kê hồ sơ, không nêu thêm trình tự, lệ phí, thời hạn.
-- Hỏi về **lệ phí** → chỉ trả lời lệ phí, không nêu hồ sơ hay trình tự thực hiện.
-- Hỏi về **trình tự / cách thực hiện** → chỉ hướng dẫn các bước, không liệt kê hồ sơ hay lệ phí.
-- Hỏi về **thời hạn** → chỉ nêu thời hạn giải quyết.
-- Hỏi chung về **thủ tục** (không chỉ định khía cạnh nào) → tóm tắt tổng quan ngắn gọn.
-- **Diễn giải / ví dụ** chỉ được thêm để làm rõ câu trả lời chính, KHÔNG để độn thêm thông tin ngoài phạm vi câu hỏi.
+**Ưu tiên trả lời ĐÚNG trọng tâm khía cạnh được hỏi. Bổ sung thông tin liên quan trực tiếp nếu cần để câu trả lời có ích thực sự — không bỏ sót phần quan trọng chỉ vì không được hỏi tường minh.**
+- Hỏi về **hồ sơ** → liệt kê đầy đủ hồ sơ là chính; ghi thêm nơi nộp/cách nộp nếu cần hoàn chỉnh.
+- Hỏi về **lệ phí** → trả lời đủ các mức lệ phí, đối tượng miễn; không liệt kê hồ sơ dài.
+- Hỏi về **trình tự / cách thực hiện** → hướng dẫn đầy đủ các bước theo đúng trình tự.
+- Hỏi về **thời hạn** → nêu thời hạn giải quyết; có thể nhắc thêm thời hạn nộp hồ sơ nếu liên quan.
+- Hỏi chung về **thủ tục** → tóm tắt tổng quan đủ các phần chính (hồ sơ, trình tự, thời hạn, lệ phí).
+- **Diễn giải / ví dụ** được dùng để làm rõ câu trả lời chính, không để độn thêm nội dung không liên quan.
 {_common_format_rules()}
 
 ## Yêu cầu mở rộng theo lĩnh vực
@@ -375,12 +375,12 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
         )
         return (
             "### Khi câu hỏi thuộc lĩnh vực pháp lý / thủ tục hành chính\n"
-            "- **Chỉ trả lời ĐÚNG khía cạnh được hỏi** — không tự mở rộng sang hồ sơ, lệ phí, trình tự, thời hạn, hay bất kỳ phần nào khác nếu người dùng không hỏi đến.\n"
-            "  - Ví dụ: hỏi 'hồ sơ gồm gì?' → CHỈ liệt kê hồ sơ; KHÔNG nêu trình tự hay lệ phí.\n"
-            "  - Ví dụ: hỏi 'lệ phí bao nhiêu?' → CHỈ trả lời lệ phí; KHÔNG liệt kê hồ sơ.\n"
-            "  - Ví dụ: hỏi 'trình tự thực hiện?' → CHỈ hướng dẫn các bước; KHÔNG liệt kê hồ sơ hay lệ phí.\n"
-            "  - Diễn giải / ví dụ được phép dùng để làm RÕ câu trả lời chính, không để mở rộng nội dung ngoài câu hỏi.\n"
-            "- Mở đầu bằng 1 câu trả lời trực diện, ngắn gọn, gộp luôn kết luận; không lặp lại thêm mục 'Kết luận ngắn' ngay bên dưới.\n"
+            "- **Ưu tiên trả lời ĐÚNG trọng tâm khía cạnh được hỏi** trước, rồi mới bổ sung thông tin liên quan trực tiếp nếu cần thiết để câu trả lời có ích thực sự.\n"
+            "  - Ví dụ: hỏi 'hồ sơ gồm gì?' → Liệt kê đầy đủ hồ sơ là chính; có thể ghi thêm 'nộp tại...' nếu cần để trả lời hoàn chỉnh.\n"
+            "  - Ví dụ: hỏi 'lệ phí bao nhiêu?' → Trả lời lệ phí đầy đủ tất cả các mức; có thể ghi thêm đối tượng miễn phí nếu có.\n"
+            "  - Ví dụ: hỏi 'trình tự thực hiện?' → Hướng dẫn đầy đủ các bước theo đúng trình tự.\n"
+            "  - Hỏi chung về 'thủ tục' → Tóm tắt đủ các phần: hồ sơ, trình tự, thời hạn, lệ phí (ngắn gọn mỗi phần).\n"
+            "- Mở đầu bằng 1 câu trả lời trực diện, gộp luôn kết luận; không lặp lại thêm mục 'Kết luận ngắn' ngay bên dưới.\n"
             "- Sau câu mở đầu, nếu có căn cứ cụ thể thì viết: 'Theo quy định tại Khoản..., Điều..., tên văn bản:'.\n"
             "- Ngay sau câu đó, trích 1 blockquote ngắn là đúng phần câu chữ pháp lý liên quan nhất.\n"
             "- Không tách riêng một mục 'Căn cứ pháp lý' rồi lại tách tiếp một mục 'Điều ...' nếu cùng nói về một căn cứ.\n"
@@ -389,7 +389,7 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "- Không trả lời kiểu chung chung nếu đã có căn cứ cụ thể trong nguồn.\n"
             "- Nếu nguồn có nhiều mục gần giống nhau như tạm trú và thường trú, phải kiểm tra lại tên thủ tục ngay trước mỗi kết luận.\n"
             "- **Ưu tiên thủ tục dành cho công dân Việt Nam** — nếu câu hỏi không đề cập người nước ngoài/ngoại kiều, CHỈ trả lời về thủ tục của công dân Việt Nam. Thủ tục dành cho người nước ngoài có thể nêu ngắn ở phần Lưu ý cuối cùng nếu hợp lý.\n"
-            "- Không tự ý mở rộng sang chủ đề khác (ví dụ: câu hỏi về tạm trú không cần đề cập căn cước công dân, trừ khi căn cước là thành phần hồ sơ bắt buộc).\n"
+            "- Không tự ý mở rộng sang chủ đề hoàn toàn khác (ví dụ: câu hỏi về tạm trú không cần đề cập căn cước công dân, trừ khi căn cước là thành phần hồ sơ bắt buộc).\n"
             f"{guidance}"
             f"{source_scope}"
         )
@@ -2021,7 +2021,11 @@ class ChatEngine:
                                 support_chunks=fallback_support_chunks,
                                 image_part=image_part,
                                 force_web=True,
-                                emit_support_citations=not total_no_answer,
+                                # Khi web là nguồn chính (force_web), KHÔNG emit RAG doc citations.
+                                # Các doc từ retriever (vd: "Sổ tay thuế doanh nghiệp") không liên quan
+                                # đến câu trả lời web → gây nhầm lẫn trong panel Tham khảo.
+                                # Panel sẽ chỉ hiển thị web_citations do _stream_ai emit sau.
+                                emit_support_citations=False,
                                 web_search_query=web_search_query,
                                 session_key=session_key,
                             ):
@@ -2047,7 +2051,8 @@ class ChatEngine:
                                 support_chunks=effective_chunks,
                                 image_part=image_part,
                                 force_web=True,
-                                emit_support_citations=True,
+                                # Web là nguồn chính → không emit RAG doc citations
+                                emit_support_citations=False,
                                 web_search_query=web_search_query,
                                 session_key=session_key,
                             ):

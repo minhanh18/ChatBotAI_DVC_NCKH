@@ -347,7 +347,7 @@ async def search_and_fetch(query: str) -> list[WebResult]:
     explicit_urls = extract_urls(query)
     async with httpx.AsyncClient(
         follow_redirects=True,
-        timeout=httpx.Timeout(connect=3.0, read=min(settings.WEB_SEARCH_TIMEOUT_SEC, 5.0), write=3.0, pool=3.0),
+        timeout=httpx.Timeout(connect=3.0, read=settings.WEB_SEARCH_TIMEOUT_SEC, write=3.0, pool=3.0),
         headers={"User-Agent": USER_AGENT},
     ) as client:
         if explicit_urls:

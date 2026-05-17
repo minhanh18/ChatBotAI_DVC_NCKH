@@ -142,8 +142,8 @@ class Settings(BaseSettings):
     # ── Live web search / crawl ───────────────────────────
     ENABLE_WEB_SEARCH: bool = True
     WEB_SEARCH_RESULTS_LIMIT: int = 5
-    WEB_SEARCH_FETCH_PAGES: int = 3
-    WEB_SEARCH_TIMEOUT_SEC: float = 8.0
+    WEB_SEARCH_FETCH_PAGES: int = 2
+    WEB_SEARCH_TIMEOUT_SEC: float = 5.0
     WEB_SEARCH_MAX_CONTEXT_CHARS: int = 1200
 
     # ── Cloudflare R2 Storage (Thay thế hoàn toàn đoạn Azure cũ) ──

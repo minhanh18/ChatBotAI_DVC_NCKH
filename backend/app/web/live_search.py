@@ -347,7 +347,7 @@ async def search_and_fetch(query: str) -> list[WebResult]:
     explicit_urls = extract_urls(query)
     async with httpx.AsyncClient(
         follow_redirects=True,
-        timeout=httpx.Timeout(connect=5.0, read=settings.WEB_SEARCH_TIMEOUT_SEC, write=5.0, pool=5.0),
+        timeout=httpx.Timeout(connect=3.0, read=min(settings.WEB_SEARCH_TIMEOUT_SEC, 5.0), write=3.0, pool=3.0),
         headers={"User-Agent": USER_AGENT},
     ) as client:
         if explicit_urls:
@@ -385,7 +385,7 @@ async def search_and_fetch(query: str) -> list[WebResult]:
         ranked_candidates = sorted(deduped, key=lambda item: score_search_result(query, item), reverse=True)
         fetch_limit = settings.WEB_SEARCH_FETCH_PAGES
         tasks = []
-        for item in ranked_candidates[: fetch_limit + 1]:
+        for item in ranked_candidates[:fetch_limit]:
             logger.info("Fetching page content: %s", item.get("url"))
             tasks.append(fetch_page_context(client, item["url"], item.get("title"), item.get("snippet", ""), query=query))
         fetched = await asyncio.gather(*tasks, return_exceptions=True)
@@ -470,30 +470,46 @@ def build_search_queries(query: str) -> list[str]:
     now = now_app_time()
     date_vi = now.strftime("%d/%m/%Y")
     year = now.strftime("%Y")
-    variants = [base]
     base_l = base.lower()
-    if any(k in base_l for k in ["thủ tục", "hồ sơ", "nộp", "đăng ký", "cấp", "dịch vụ công", "trực tuyến", "tạm trú", "căn cước", "khai sinh", "hộ kinh doanh"]):
+
+    # Xác định nhóm query
+    is_procedure = any(k in base_l for k in ["thủ tục", "hồ sơ", "nộp", "đăng ký", "cấp", "dịch vụ công", "trực tuyến", "tạm trú", "căn cước", "khai sinh", "hộ kinh doanh"])
+    is_fee = any(k in base_l for k in ["lệ phí", "mức phí", "mức thu", "phí đăng ký", "phí nộp"])
+    is_tax = any(k in base_l for k in ["thuế", "tncn", "thu nhập", "khai thuế", "quyết toán", "tính thuế"])
+    is_fresh = should_prioritize_fresh_web_context(base)
+
+    variants: list[str] = []
+
+    if is_procedure:
+        # site:dichvucong query thường trả kết quả tốt hơn bare query cho thủ tục
+        # → bỏ bare query, chỉ dùng 2 site-specific queries
         variants.extend([
             f"site:dichvucong.gov.vn {base}",
             f"{base} biểu mẫu hồ sơ dichvucong.gov.vn",
         ])
-    # Khi query hỏi về lệ phí → bổ sung luatvietnam + thuvienphapluat để tìm mức phí
-    # chính xác khi DVC chưa ghi rõ (ví dụ: trực tuyến = miễn phí / giảm 50%)
-    if any(k in base_l for k in ["lệ phí", "mức phí", "mức thu", "phí đăng ký", "phí nộp"]):
+    else:
+        variants.append(base)
+
+    if is_fee:
         variants.extend([
             f"site:luatvietnam.vn {base}",
             f"site:thuvienphapluat.vn {base}",
         ])
-    if any(k in base_l for k in ["thuế", "tncn", "thu nhập", "khai thuế", "quyết toán", "tính thuế"]):
+    if is_tax:
         variants.extend([
             f"site:gdt.gov.vn {base}",
             f"site:luatvietnam.vn {base}",
         ])
-    if should_prioritize_fresh_web_context(base):
+    if is_fresh:
         variants.extend([
             f"{base} mới nhất {year}",
             f"{base} hiện hành",
         ])
+
+    # Đảm bảo luôn có ít nhất 1 query
+    if not variants:
+        variants = [base]
+
     ordered: list[str] = []
     seen: set[str] = set()
     for item in variants:
@@ -501,7 +517,8 @@ def build_search_queries(query: str) -> list[str]:
         if key and key not in seen:
             seen.add(key)
             ordered.append(item)
-    return ordered
+    # Giới hạn tối đa 3 Tavily queries để tránh lãng phí thời gian
+    return ordered[:3]
 
 
 def rank_web_results(query: str, results: list[WebResult]) -> list[WebResult]:

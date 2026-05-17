@@ -1842,6 +1842,25 @@ class ChatEngine:
                     # ───────────────────────────────────────────────────────────────────
                     _rag_direct_streamed = False   # True khi đã stream RAG trực tiếp xong
 
+                    # ── WEB PREFETCH SONG SONG VỚI RAG ─────────────────────────────────
+                    # Nếu query có khả năng cần web fallback (thủ tục hành chính, hồ sơ...)
+                    # → khởi động Tavily + page fetch NGAY trong khi RAG LLM đang chạy.
+                    # Khi RAG trả [[RAG_NO_ANSWER]], web results đã sẵn sàng → tiết kiệm 6-12s.
+                    _rag_web_prefetch_task: asyncio.Task | None = None
+                    _rag_web_prefetch_query = web_search_query or query
+                    _cached_web_for_rag = get_cached_web_results(session_key, query) if session_key else None
+                    if (
+                        _cached_web_for_rag is None
+                        and not force_web
+                        and should_search_web(_rag_web_prefetch_query)
+                        and effective_chunks  # chỉ prefetch khi có chunks (tránh double fetch)
+                    ):
+                        _rag_web_prefetch_task = asyncio.create_task(
+                            maybe_fetch_web_context(_rag_web_prefetch_query, force=True)
+                        )
+                        logger.info("RAG web prefetch started in parallel for query=%s", query[:60])
+                    # ───────────────────────────────────────────────────────────────────
+
                     if not effective_chunks:
                         logger.info("Skip RAG generate — no chunks available, going straight to web fallback")
                         rag_text = "[[RAG_NO_ANSWER]]"
@@ -1920,6 +1939,11 @@ class ChatEngine:
                             if session_key and effective_chunks:
                                 cache_chunks(session_key, effective_chunks)
 
+                            # RAG đã trả lời thành công → cancel prefetch task nếu còn chạy
+                            if _rag_web_prefetch_task is not None and not _rag_web_prefetch_task.done():
+                                _rag_web_prefetch_task.cancel()
+                                logger.info("RAG answered OK — cancelled parallel web prefetch")
+
                             _rag_direct_streamed = True  # đánh dấu đã stream xong, bỏ qua if/elif/else bên dưới
 
                     # ─── Phần cũ: xử lý fallback/force_web (chỉ chạy khi CHƯA stream trực tiếp) ───
@@ -1949,6 +1973,25 @@ class ChatEngine:
 
                         if session_key and effective_chunks:
                             cache_chunks(session_key, effective_chunks)
+
+                        # ── Resolve web prefetch nếu đã kick off song song ──
+                        if _rag_web_prefetch_task is not None and not _rag_web_prefetch_task.done():
+                            logger.info("Awaiting parallel web prefetch before fallback...")
+                            try:
+                                _prefetch_context, _prefetch_citations = await _rag_web_prefetch_task
+                                if session_key and _prefetch_context:
+                                    cache_web_results(session_key, query, _prefetch_context, _prefetch_citations)
+                                    logger.info("Web prefetch cached — fallback will use cache HIT")
+                            except Exception as _pfe:
+                                logger.warning("Web prefetch task failed: %s", _pfe)
+                        elif _rag_web_prefetch_task is not None and _rag_web_prefetch_task.done():
+                            try:
+                                _prefetch_context, _prefetch_citations = _rag_web_prefetch_task.result()
+                                if session_key and _prefetch_context:
+                                    cache_web_results(session_key, query, _prefetch_context, _prefetch_citations)
+                                    logger.info("Web prefetch already done — cached for fallback")
+                            except Exception as _pfe:
+                                logger.warning("Web prefetch task result failed: %s", _pfe)
 
                         if _should_fallback_to_web_after_rag(query, rag_text):
                             logger.info(

@@ -1849,11 +1849,22 @@ class ChatEngine:
                     _rag_web_prefetch_task: asyncio.Task | None = None
                     _rag_web_prefetch_query = web_search_query or query
                     _cached_web_for_rag = get_cached_web_results(session_key, query) if session_key else None
+
+                    # Prefetch web SONG SONG với RAG LLM khi query thuộc nhóm có khả năng
+                    # cần web fallback — bao gồm cả query thủ tục/hồ sơ (không chỉ freshness).
+                    # should_search_web() chỉ True khi có freshness keywords → thiếu sót.
+                    # Thêm kiểm tra is_procedure để bắt nhóm "hồ sơ đăng ký X", "thủ tục Y"...
+                    _prefetch_query_l = _rag_web_prefetch_query.lower()
+                    _is_procedure_prefetch = any(k in _prefetch_query_l for k in [
+                        "thủ tục", "hồ sơ", "nộp", "đăng ký", "cấp", "dịch vụ công",
+                        "tạm trú", "thường trú", "căn cước", "khai sinh", "kết hôn",
+                        "hộ khẩu", "giấy tờ", "cần chuẩn bị", "cần gì",
+                    ])
                     if (
                         _cached_web_for_rag is None
                         and not force_web
-                        and should_search_web(_rag_web_prefetch_query)
-                        and effective_chunks  # chỉ prefetch khi có chunks (tránh double fetch)
+                        and effective_chunks  # chỉ prefetch khi có chunks
+                        and (should_search_web(_rag_web_prefetch_query) or _is_procedure_prefetch)
                     ):
                         _rag_web_prefetch_task = asyncio.create_task(
                             maybe_fetch_web_context(_rag_web_prefetch_query, force=True)
@@ -2281,6 +2292,7 @@ class ChatEngine:
             # enrich() gọi Gemini để kiểm tra hiệu lực văn bản pháp lý.
             # Chạy sau done để client không phải chờ. Frontend có thể ignore các
             # event legal_refs/source_refs đến sau done nếu stream đã đóng.
+            # Timeout 3s: nếu enrich() chưa xong thì bỏ qua — không kéo dài stream.
             if not is_greeting and response_mode in (AnswerMode.RAG, AnswerMode.AI) and not _refusal:
                 try:
                     from app.chat.legal_enricher import legal_enricher as _enricher
@@ -2293,14 +2305,19 @@ class ChatEngine:
                         full_text + "\n\n" + rag_context_text
                     ))
                     if _has_legal_refs:
-                        enrich = await _enricher.enrich(
-                            response_text=full_text,
-                            context_chunks_text=rag_context_text if response_mode == AnswerMode.RAG else "",
+                        enrich = await asyncio.wait_for(
+                            _enricher.enrich(
+                                response_text=full_text,
+                                context_chunks_text=rag_context_text if response_mode == AnswerMode.RAG else "",
+                            ),
+                            timeout=3.0,
                         )
                         if enrich.legal_refs:
                             yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
                         if enrich.source_refs:
                             yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
+                except asyncio.TimeoutError:
+                    logger.info("Legal enrichment timeout (>3s) — skipped to close stream early")
                 except Exception as _enrich_err:
                     logger.warning("Enrichment thất bại (bỏ qua): %s", _enrich_err)
 

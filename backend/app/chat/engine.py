@@ -263,21 +263,15 @@ Mỗi đoạn trong ngữ cảnh được gắn nhãn [Tài liệu N] — N là 
 - Nếu tài liệu có link biểu mẫu/hồ sơ: hiển thị `📄 [Tải biểu mẫu/hồ sơ tại đây](url)`.
 - Nếu không có URL thực trong ngữ cảnh, tuyệt đối không tự tạo link dịch vụ công/hồ sơ. Chỉ nêu tên dịch vụ/thủ tục, không thêm bất kỳ thông báo giải thích về việc thiếu link.
 - Nếu link là văn bản pháp luật chỉ dùng khi đó là link thao tác/xem văn bản thật sự cần thiết; không dùng để gắn số nguồn tham khảo trong từng câu.
-```
-✅ Thủ tục này thực hiện trực tuyến theo Chỉ thị 24/CT-TTg
 
-## [Tên thủ tục]
-
-**Thời hạn giải quyết:** ...
-**Lệ phí:** ...
-**Cơ quan thực hiện:** ...
-
-### Các bước thực hiện
-**Bước 1:** [Mô tả đầy đủ]
-👉 [Thực hiện tại đây](URL nếu có)
-
-**Bước 2:** ...
-```
+### ⚠️ Quy tắc phạm vi trả lời — QUAN TRỌNG
+**Chỉ trả lời ĐÚNG khía cạnh người dùng hỏi. KHÔNG tự mở rộng sang thông tin không được hỏi.**
+- Hỏi về **hồ sơ** → chỉ liệt kê hồ sơ, không nêu thêm trình tự, lệ phí, thời hạn.
+- Hỏi về **lệ phí** → chỉ trả lời lệ phí, không nêu hồ sơ hay trình tự thực hiện.
+- Hỏi về **trình tự / cách thực hiện** → chỉ hướng dẫn các bước, không liệt kê hồ sơ hay lệ phí.
+- Hỏi về **thời hạn** → chỉ nêu thời hạn giải quyết.
+- Hỏi chung về **thủ tục** (không chỉ định khía cạnh nào) → có thể tóm tắt tổng quan nhưng vẫn giữ ngắn gọn.
+- **Diễn giải / ví dụ** chỉ được thêm vào để làm rõ câu trả lời chính, KHÔNG để độn thêm thông tin ngoài phạm vi câu hỏi.
 {_common_format_rules()}
 
 ## Yêu cầu mở rộng theo lĩnh vực
@@ -323,6 +317,15 @@ def _build_ai_prompt(domain_instructions: str, query: str = "") -> str:
 ### Khi chưa đủ căn cứ
 - Nói rõ "chưa đủ cơ sở để khẳng định chính xác hoàn toàn".
 - Với câu hỏi lệ phí/tên thủ tục cụ thể → đối chiếu đúng tên thủ tục trước khi kết luận.
+
+### ⚠️ Quy tắc phạm vi trả lời — QUAN TRỌNG
+**Chỉ trả lời ĐÚNG khía cạnh người dùng hỏi. KHÔNG tự mở rộng sang thông tin không được hỏi.**
+- Hỏi về **hồ sơ** → chỉ liệt kê hồ sơ, không nêu thêm trình tự, lệ phí, thời hạn.
+- Hỏi về **lệ phí** → chỉ trả lời lệ phí, không nêu hồ sơ hay trình tự thực hiện.
+- Hỏi về **trình tự / cách thực hiện** → chỉ hướng dẫn các bước, không liệt kê hồ sơ hay lệ phí.
+- Hỏi về **thời hạn** → chỉ nêu thời hạn giải quyết.
+- Hỏi chung về **thủ tục** (không chỉ định khía cạnh nào) → tóm tắt tổng quan ngắn gọn.
+- **Diễn giải / ví dụ** chỉ được thêm để làm rõ câu trả lời chính, KHÔNG để độn thêm thông tin ngoài phạm vi câu hỏi.
 {_common_format_rules()}
 
 ## Yêu cầu mở rộng theo lĩnh vực
@@ -372,17 +375,21 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
         )
         return (
             "### Khi câu hỏi thuộc lĩnh vực pháp lý / thủ tục hành chính\n"
+            "- **Chỉ trả lời ĐÚNG khía cạnh được hỏi** — không tự mở rộng sang hồ sơ, lệ phí, trình tự, thời hạn, hay bất kỳ phần nào khác nếu người dùng không hỏi đến.\n"
+            "  - Ví dụ: hỏi 'hồ sơ gồm gì?' → CHỈ liệt kê hồ sơ; KHÔNG nêu trình tự hay lệ phí.\n"
+            "  - Ví dụ: hỏi 'lệ phí bao nhiêu?' → CHỈ trả lời lệ phí; KHÔNG liệt kê hồ sơ.\n"
+            "  - Ví dụ: hỏi 'trình tự thực hiện?' → CHỈ hướng dẫn các bước; KHÔNG liệt kê hồ sơ hay lệ phí.\n"
+            "  - Diễn giải / ví dụ được phép dùng để làm RÕ câu trả lời chính, không để mở rộng nội dung ngoài câu hỏi.\n"
             "- Mở đầu bằng 1 câu trả lời trực diện, ngắn gọn, gộp luôn kết luận; không lặp lại thêm mục 'Kết luận ngắn' ngay bên dưới.\n"
             "- Sau câu mở đầu, nếu có căn cứ cụ thể thì viết: 'Theo quy định tại Khoản..., Điều..., tên văn bản:'.\n"
             "- Ngay sau câu đó, trích 1 blockquote ngắn là đúng phần câu chữ pháp lý liên quan nhất.\n"
             "- Không tách riêng một mục 'Căn cứ pháp lý' rồi lại tách tiếp một mục 'Điều ...' nếu cùng nói về một căn cứ.\n"
-            "- Sau khi nêu căn cứ pháp lý và thông tin pháp lý hoặc thông tin liên quan, sẽ tiến hành diễn giải thêm thoe cách dễ hiểu và có thể đưa ra ví dụ gần gũi, dễ hiểu.\n"
+            "- Sau khi nêu căn cứ, diễn giải thêm theo cách dễ hiểu và có thể đưa ra ví dụ gần gũi — nhưng chỉ trong phạm vi khía cạnh được hỏi.\n"
             "- Nếu chưa đủ căn cứ để khẳng định, phải nói rõ là chưa đủ cơ sở để khẳng định chính xác hoàn toàn.\n"
             "- Không trả lời kiểu chung chung nếu đã có căn cứ cụ thể trong nguồn.\n"
             "- Nếu nguồn có nhiều mục gần giống nhau như tạm trú và thường trú, phải kiểm tra lại tên thủ tục ngay trước mỗi kết luận.\n"
             "- **Ưu tiên thủ tục dành cho công dân Việt Nam** — nếu câu hỏi không đề cập người nước ngoài/ngoại kiều, CHỈ trả lời về thủ tục của công dân Việt Nam. Thủ tục dành cho người nước ngoài có thể nêu ngắn ở phần Lưu ý cuối cùng nếu hợp lý.\n"
             "- Không tự ý mở rộng sang chủ đề khác (ví dụ: câu hỏi về tạm trú không cần đề cập căn cước công dân, trừ khi căn cước là thành phần hồ sơ bắt buộc).\n"
-            "- Cuối cùng, trước khi hiển thị nguồn tham khảo thì nên có 1 câu chốt lại hoặc câu lưu ý liên quan hoặc hỏi thêm nếu hợp lý hoặc gợi ý các bước nên làm bây giờ.\n"
             f"{guidance}"
             f"{source_scope}"
         )

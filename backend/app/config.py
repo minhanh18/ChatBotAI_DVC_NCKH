@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     WEB_SEARCH_RESULTS_LIMIT: int = 5
     WEB_SEARCH_FETCH_PAGES: int = 2       # 2 trang đủ cho focused answers
     WEB_SEARCH_TIMEOUT_SEC: float = 5.5   # dichvucong.gov.vn thực tế tốn 1.8–6s; 5.0 đôi khi timeout
-    WEB_SEARCH_MAX_CONTEXT_CHARS: int = 900  # 1200 → hơi nhiều; 600 → cắt giữa hồ sơ; 900 là điểm cân bằng
+    WEB_SEARCH_MAX_CONTEXT_CHARS: int = 1400  # đủ cho danh sách hồ sơ đầy đủ (~10 mục × 120 ký tự)
 
     # ── Cloudflare R2 Storage (Thay thế hoàn toàn đoạn Azure cũ) ──
     USE_R2_STORAGE: bool = False 

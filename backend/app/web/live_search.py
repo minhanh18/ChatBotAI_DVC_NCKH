@@ -537,6 +537,18 @@ def score_search_result(query: str, item: dict) -> float:
     if not is_candidate_url_allowed(url, query):
         return -999.0
     score = score_domain_reliability(domain, query, title) * 4.0
+
+    # Bonus cho dichvucong URLs dẫn đến trang thủ tục chính thức
+    # Cần thiết vì title của dichvucong thường ngắn → ít keyword match → bị luatvietnam/thuvienphapluat vượt
+    url_l_score = url.lower()
+    if "dichvucong.gov.vn" in url_l_score:
+        if "dvc-chi-tiet-thu-tuc-nganh-doc" in url_l_score:
+            score += 3.0   # trang thủ tục chính thức theo ngành dọc — ưu tiên cao nhất
+        elif "dvc-tthc-thu-tuc-hanh-chinh-chi-tiet" in url_l_score:
+            score += 2.0   # trang thủ tục hành chính chi tiết
+        elif "dvc-chi-tiet-thu-tuc-hanh-chinh" in url_l_score:
+            score += 2.5   # trang chi tiết thủ tục
+
     # Penalize kết quả dành cho người nước ngoài khi query của người dùng
     # không đề cập đến nước ngoài/người nước ngoài
     _foreign_markers = ["người nước ngoài", "nước ngoài", "ngoại kiều", "foreigner", "foreign national"]

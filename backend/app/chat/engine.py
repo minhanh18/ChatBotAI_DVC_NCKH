@@ -1831,6 +1831,12 @@ class ChatEngine:
 
             else:
                 if decision.mode == AnswerMode.RAG:
+                    # ── Emit "thinking" ngay lập tức để frontend biết đang xử lý ──
+                    # RAG LLM (~1.5s) + web fetch (~4s) chạy trước khi có token đầu tiên.
+                    # Nếu không emit gì → frontend hiển thị màn hình trắng/spinner im lặng.
+                    # "thinking" event → frontend hiển thị "Đang tra cứu..." ngay lập tức.
+                    yield _sse(StreamEvent("thinking", "Đang tra cứu thông tin..."))
+
                     # ── Lớp 1: kiểm tra retrieval cache ─────────────────────
                     effective_chunks = decision.chunks
                     if session_key and not is_greeting and image_part is None:
@@ -2089,6 +2095,7 @@ class ChatEngine:
                 else:
                     response_mode = AnswerMode.AI
                     yield _sse(StreamEvent("mode", response_mode.value))
+                    yield _sse(StreamEvent("thinking", "Đang tra cứu thông tin..."))
 
                     support_chunks: list[RetrievedChunk] = []
                     best_score = float(assessment.get("best_score") or 0.0)

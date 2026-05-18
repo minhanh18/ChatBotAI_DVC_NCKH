@@ -318,6 +318,13 @@ def _build_ai_prompt(domain_instructions: str, query: str = "") -> str:
 - Nói rõ "chưa đủ cơ sở để khẳng định chính xác hoàn toàn".
 - Với câu hỏi lệ phí/tên thủ tục cụ thể → đối chiếu đúng tên thủ tục trước khi kết luận.
 
+### ⚠️ Câu thông báo an toàn — BẮT BUỘC khi không có nguồn tham khảo
+Nếu câu trả lời KHÔNG có nguồn web hoặc tài liệu nội bộ đính kèm (tức là không có panel Tham khảo thêm),
+**BẮT BUỘC** kết thúc câu trả lời bằng dòng sau (chọn nội dung phù hợp):
+> ⚠️ *Thông tin trên mang tính tham khảo. Để được hỗ trợ chính xác, vui lòng liên hệ trực tiếp cơ quan có thẩm quyền hoặc gọi đường dây hỗ trợ: **1800 1096** (miễn phí).*
+
+Nếu đã có nguồn tham khảo đính kèm → KHÔNG cần thêm dòng này.
+
 ### ⚠️ Quy tắc phạm vi trả lời — QUAN TRỌNG
 **Ưu tiên trả lời ĐÚNG trọng tâm khía cạnh được hỏi. Bổ sung thông tin liên quan trực tiếp nếu cần để câu trả lời có ích thực sự — không bỏ sót phần quan trọng chỉ vì không được hỏi tường minh.**
 - Hỏi về **hồ sơ** → liệt kê đầy đủ hồ sơ là chính; ghi thêm nơi nộp/cách nộp nếu cần hoàn chỉnh.
@@ -386,6 +393,11 @@ def _domain_instructions(query: str, *, rag: bool) -> str:
             "- Không tách riêng một mục 'Căn cứ pháp lý' rồi lại tách tiếp một mục 'Điều ...' nếu cùng nói về một căn cứ.\n"
             "- Sau khi nêu căn cứ, diễn giải thêm theo cách dễ hiểu và có thể đưa ra ví dụ gần gũi — nhưng chỉ trong phạm vi khía cạnh được hỏi.\n"
             "- Nếu chưa đủ căn cứ để khẳng định, phải nói rõ là chưa đủ cơ sở để khẳng định chính xác hoàn toàn.\n"
+            "- **Câu thông báo an toàn**: Nếu câu trả lời KHÔNG có nguồn tham khảo đính kèm, "
+            "BẮT BUỘC kết thúc bằng: "
+            "'⚠️ *Thông tin trên mang tính tham khảo. Để được hỗ trợ chính xác, vui lòng liên hệ "
+            "cơ quan có thẩm quyền hoặc gọi **1800 1096** (miễn phí).*' "
+            "Nếu đã có nguồn tham khảo → không cần thêm dòng này.\n"
             "- Không trả lời kiểu chung chung nếu đã có căn cứ cụ thể trong nguồn.\n"
             "- Nếu nguồn có nhiều mục gần giống nhau như tạm trú và thường trú, phải kiểm tra lại tên thủ tục ngay trước mỗi kết luận.\n"
             "- **Ưu tiên thủ tục dành cho công dân Việt Nam** — nếu câu hỏi không đề cập người nước ngoài/ngoại kiều, CHỈ trả lời về thủ tục của công dân Việt Nam. Thủ tục dành cho người nước ngoài có thể nêu ngắn ở phần Lưu ý cuối cùng nếu hợp lý.\n"
@@ -2249,6 +2261,25 @@ class ChatEngine:
                     _rag_ctx_sl = "\n\n".join(c.content for c in (decision.chunks or []))
                     _sl_source = (full_text + "\n\n" + _rag_ctx_sl) if response_mode == AnswerMode.RAG else full_text
                     _service_links_to_emit = _enricher_sl.extract_service_links_sync(_sl_source) or []
+
+                    # Bổ sung dichvucong URLs từ web_citations vào service_links
+                    # vì LLM thường không tự viết URL ra text → extract_service_links_sync bỏ sót
+                    _existing_link_urls = {(_l.get('url') or '').strip() for _l in _service_links_to_emit}
+                    for _cit in citations:
+                        _cit_url = (_cit.url or '').strip()
+                        if (
+                            _cit_url
+                            and 'dichvucong' in _cit_url
+                            and _cit_url not in _existing_link_urls
+                        ):
+                            _service_links_to_emit.append({
+                                'url': _cit_url,
+                                'title': _cit.document_name or 'Tra cứu thủ tục trên Cổng Dịch vụ công',
+                                'label': 'Cổng Dịch vụ công',
+                                'source': 'dichvucong.gov.vn',
+                            })
+                            _existing_link_urls.add(_cit_url)
+
                     if _service_links_to_emit:
                         # Bổ sung service link vào citations nếu có URL mới
                         for _link in _service_links_to_emit:
@@ -2609,18 +2640,20 @@ class ChatEngine:
                 "\n\n## Dữ liệu web kiểm chứng cập nhật\n"
                 f"{web_context}\n\n"
                 "## Quy tắc dùng dữ liệu web\n"
-                "- Chỉ dùng dữ liệu web ở trên khi truy vấn cần kiểm tra tính cập nhật, hiệu lực, sửa đổi, thay thế của văn bản pháp lý/hành chính.\n"
-                "- Chỉ coi các URL trong ngữ cảnh web ở trên là nguồn tham khảo có thể hiển thị; không được tự bịa thêm link khác.\n"
-                "- Nếu dữ liệu web chưa đủ mới hoặc chưa chắc chắn, nói rõ giới hạn thay vì khẳng định chắc chắn.\n"
-                "- Với câu hỏi pháp lý hoặc lệ phí, phải đối chiếu đúng tên thủ tục trong câu hỏi trước khi kết luận mức tiền.\n"
+                "- Dữ liệu web ở trên là nguồn chính để trả lời — hãy ưu tiên dùng nội dung này.\n"
+                "- Nếu dữ liệu web chưa đủ hoặc chưa chắc chắn, nói rõ giới hạn thay vì khẳng định.\n"
+                "- Với câu hỏi pháp lý hoặc lệ phí, phải đối chiếu đúng tên thủ tục trong câu hỏi trước khi kết luận.\n"
                 "- Lệ phí thường có NHIỀU mức theo từng hình thức nộp (Trực tiếp / Trực tuyến). "
-                "Mỗi hình thức có thể có: theo danh sách, cá nhân/hộ gia đình, Miễn phí cho đối tượng đặc biệt. "
-                "PHẢI đọc và nêu ĐẦY ĐỦ tất cả mức theo từng hình thức — KHÔNG chỉ đọc mức 'Miễn phí' rồi kết luận miễn phí (Miễn phí chỉ dành đối tượng đặc biệt: người cao tuổi, trẻ em, hộ nghèo...). "
-                "Ví dụ đúng — Trực tuyến: 5.000đ/danh sách, 7.000đ/cá nhân-hộ gia đình, Miễn phí/đối tượng TT75. "
-                "Ví dụ đúng — Trực tiếp: 10.000đ/danh sách, 15.000đ/cá nhân-hộ gia đình, Miễn phí/đối tượng TT75.\n"
-                "- **TUYỆT ĐỐI KHÔNG** dùng `(trang X)` hay `([N], trang X)` cho nội dung từ web — định dạng đó chỉ dùng cho tài liệu nội bộ có số trang thực.\n"
-                "- Khi trích dẫn thông tin từ nguồn web, cuối câu dùng `([N])` trong đó N là số thứ tự nguồn web (bắt đầu từ 1 nếu không có tài liệu nội bộ, hoặc từ số tiếp theo sau tài liệu nội bộ). Ví dụ: câu trích từ nguồn web thứ nhất → `([1])`, nguồn web thứ hai → `([2])`. Các số này khớp với thứ tự trong panel Tham khảo thêm và có thể click được.\n"
+                "PHẢI đọc và nêu ĐẦY ĐỦ tất cả mức — KHÔNG chỉ đọc mức 'Miễn phí' rồi kết luận miễn phí.\n"
+                "- **TUYỆT ĐỐI KHÔNG** dùng `(trang X)` hay `([N], trang X)` cho nội dung từ web.\n"
+                "- Khi trích dẫn thông tin từ nguồn web, cuối câu dùng `([N])` trong đó N là số thứ tự nguồn "
+                "(bắt đầu từ 1). Ví dụ: nguồn web thứ nhất → `([1])`, thứ hai → `([2])`.\n"
                 "- Không dùng `(nguồn)` — dùng `([N])` thay thế.\n"
+                "- **Biểu mẫu / đường link**: Nếu trong dữ liệu web có URL hoặc đường link tải biểu mẫu "
+                "(ví dụ: dichvucong.gov.vn, mẫu CT01, mẫu đơn...), hãy ghi rõ URL đó vào phần 'Biểu mẫu' "
+                "hoặc 'Tải biểu mẫu tại:' cuối câu trả lời. Nếu không có URL cụ thể thì bỏ qua, "
+                "không được tự bịa link.\n"
+                "- Chỉ hiển thị URL có sẵn trong dữ liệu web ở trên; không được tự bịa thêm link khác.\n"
             )
             yield StreamEvent("citations", [_coerce_citation(c) for c in web_citations])
 

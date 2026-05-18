@@ -34,6 +34,10 @@ FRESHNESS_PATTERNS = [
 GREETING_PATTERNS = [
     r"^\s*(xin\s*chào|chào\s*bạn|chào|hello|hi|hey)\s*[!.?… ]*$",
     r"^\s*(chào\s*ad|alo|a\s*lô)\s*[!.?… ]*$",
+    # Tiếng Việt thông thường / trêu đùa
+    r"^\s*(hong\s*bé\s*ơi|bé\s*ơi|ơi\s*bé|hey\s*bé|bé\s*đâu|bé\s*ơi\s*bé)\s*[!.?… ]*$",
+    r"^\s*(ơi\s*bạn|bạn\s*ơi|ê\s*bạn|ê\s*bot|bot\s*ơi)\s*[!.?… ]*$",
+    r"^\s*(có\s*ai\s*đó\s*không|có\s*ai\s*ở\s*đây\s*không|ai\s*đó\s*không)\s*[!.?… ]*$",
 ]
 
 # Các mẫu chitchat: cảm ơn, tạm biệt, biểu đạt cảm xúc, xác nhận
@@ -46,6 +50,10 @@ CHITCHAT_PATTERNS = [
     r"^\s*(bực\s*quá|bực\s*mình|khó\s*chịu|chán\s*quá|thất\s*vọng)\s*[!.?!… ]*$",
     r"^\s*(không\s*hiểu|chưa\s*hiểu|vẫn\s*chưa\s*hiểu|hả)\s*[!.?… ]*$",
     r"^\s*(ừ\s*nhỉ|ờ\s*nhỉ|ừ\s*đúng|vậy\s*à|thế\s*à|ồ|ôi)\s*[!.?… ]*$",
+    # Câu ngắn vô nghĩa / thử nghiệm bot
+    r"^\s*([a-z]{1,4})\s*[!.?]*$",                        # "abc", "test", "asdf"
+    r"^\s*\d+\s*[!.?]*$",                                  # "123", "1"
+    r"^\s*(bla\s*bla|la\s*la|ha\s*ha|haha|hihi|lol)\s*[!.?… ]*$",
 ]
 
 
@@ -172,6 +180,12 @@ def is_out_of_domain(query: str) -> bool:
         r"(lập trình|python|javascript|code|coding|framework|database|server|api)\b(?!.*hành chính|.*dịch vụ|.*thuế)",
         # Thiên văn / địa lý tự nhiên
         r"(hành tinh|vũ trụ|ngôi sao|thiên hà|trái đất|núi lửa|động đất)\b",
+        # ── Prompt injection / khai thác system ────────────────────────────
+        r"(system\s*prompt|system\s*promt|system\s*instruction|prompt\s*của\s*bạn)",
+        r"(bạn\s*được\s*lập\s*trình|bạn\s*là\s*ai\s*thực\s*sự|bạn\s*là\s*gpt|bạn\s*là\s*claude|bạn\s*là\s*gemini)",
+        r"(ignore\s*previous|forget\s*instructions|pretend\s*you\s*are|act\s*as\s*)",
+        r"(bỏ\s*qua\s*hướng\s*dẫn|giả\s*vờ\s*là|đóng\s*vai\s*là\s*(?!nhân viên|cán bộ|chuyên viên))",
+        r"(token|embedding|weight|model|llm|gpt|neural|transformer)\b(?!.*thuế|.*phí|.*hành chính)",
     ]
     # Nếu khớp out-of-domain nhưng cũng chứa từ hành chính thì KHÔNG coi là out-of-domain
     _ADMIN_OVERRIDE = [

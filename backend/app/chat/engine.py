@@ -2333,9 +2333,9 @@ class ChatEngine:
 
             # ── Legal enrichment: chạy SAU done — không blocking client ─────
             # enrich() gọi Gemini để kiểm tra hiệu lực văn bản pháp lý.
-            # Chạy sau done để client không phải chờ. Frontend có thể ignore các
-            # event legal_refs/source_refs đến sau done nếu stream đã đóng.
-            # Timeout 3s: nếu enrich() chưa xong thì bỏ qua — không kéo dài stream.
+            # NOTE: asyncio.wait_for không stop được asyncio.to_thread bên trong enrich()
+            # vì thread tiếp tục chạy dù coroutine bị cancel.
+            # Fix: create_task + shield(task) với timeout 2.5s → stream đóng đúng hạn.
             if not is_greeting and response_mode in (AnswerMode.RAG, AnswerMode.AI) and not _refusal:
                 try:
                     from app.chat.legal_enricher import legal_enricher as _enricher
@@ -2348,19 +2348,23 @@ class ChatEngine:
                         full_text + "\n\n" + rag_context_text
                     ))
                     if _has_legal_refs:
-                        enrich = await asyncio.wait_for(
+                        _enrich_task = asyncio.create_task(
                             _enricher.enrich(
                                 response_text=full_text,
                                 context_chunks_text=rag_context_text if response_mode == AnswerMode.RAG else "",
-                            ),
-                            timeout=3.0,
+                            )
                         )
-                        if enrich.legal_refs:
-                            yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
-                        if enrich.source_refs:
-                            yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
-                except asyncio.TimeoutError:
-                    logger.info("Legal enrichment timeout (>3s) — skipped to close stream early")
+                        try:
+                            enrich = await asyncio.wait_for(
+                                asyncio.shield(_enrich_task),
+                                timeout=2.5,
+                            )
+                            if enrich.legal_refs:
+                                yield _sse(StreamEvent("legal_refs", [_asdict(r) for r in enrich.legal_refs]))
+                            if enrich.source_refs:
+                                yield _sse(StreamEvent("source_refs", [_asdict(r) for r in enrich.source_refs]))
+                        except asyncio.TimeoutError:
+                            logger.info("Legal enrichment timeout (>2.5s) — stream closed, task running background")
                 except Exception as _enrich_err:
                     logger.warning("Enrichment thất bại (bỏ qua): %s", _enrich_err)
 

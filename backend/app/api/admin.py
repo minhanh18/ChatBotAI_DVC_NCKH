@@ -317,3 +317,52 @@ async def feedback_logs(
         }
         for feedback, message_content, title in rows
     ]
+
+
+# ── Admin Chat Stream ──────────────────────────────────────────────────────────
+# Endpoint dành riêng cho giao diện chat trong panel Admin.
+# Yêu cầu Basic Auth (giống các endpoint admin khác).
+# Tự động gắn prefix "admin::" vào session_key để phân biệt với hội thoại người dùng.
+
+from fastapi import Request
+from fastapi.responses import StreamingResponse
+from typing import Optional
+import json
+
+class _AdminChatRequest:
+    """Wrapper để tái sử dụng logic chat mà không duplicate code."""
+    def __init__(self, query: str, session_key: str, conversation_id: Optional[str]):
+        self.query = query
+        self.session_key = session_key
+        self.conversation_id = conversation_id
+        self.image_base64 = None
+        self.image_media_type = None
+
+
+@router.post("/stream")
+async def admin_chat_stream(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _admin: str = Depends(verify_admin),
+):
+    """
+    Admin chat stream — giống /api/chat/stream nhưng:
+    1. Yêu cầu Basic Auth.
+    2. Gắn prefix 'admin::' vào session_key.
+    3. Hội thoại admin bị lọc khỏi thống kê người dùng.
+    """
+    from app.api.chat import chat_stream, ChatRequest
+
+    body = await request.json()
+    raw_session_key = body.get("session_key") or ""
+    # Đảm bảo session_key mang prefix "admin::" để phân biệt với hội thoại người dùng
+    if not raw_session_key.startswith("admin::"):
+        raw_session_key = f"admin::{raw_session_key}" if raw_session_key else f"admin::sk_{_admin}"
+
+    admin_req = ChatRequest(
+        query=body.get("query", ""),
+        session_key=raw_session_key,
+        conversation_id=body.get("conversation_id"),
+    )
+
+    return await chat_stream(admin_req, db=db)
